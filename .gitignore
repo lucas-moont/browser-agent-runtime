@@ -1,0 +1,12 @@
+.scratch/
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+*.local
+LINKEDIN_POST.md
+.DS_Store
+Thumbs.db
+*.log
