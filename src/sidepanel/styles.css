@@ -77,3 +77,61 @@ body {
 .capability-strip__item[data-readiness='unavailable'] .capability-strip__status {
   color: #8a2f2f;
 }
+
+.page-context {
+  margin-top: 1.5rem;
+}
+
+.page-context__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5c5c5c;
+}
+
+.page-context__button {
+  appearance: none;
+  border: 1px solid #cfcfc8;
+  background: #fff;
+  color: #1a1a1a;
+  border-radius: 0.35rem;
+  padding: 0.45rem 0.75rem;
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.page-context__button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.page-context__error {
+  margin: 0.75rem 0 0;
+  color: #8a2f2f;
+  font-size: 0.875rem;
+}
+
+.page-context__details {
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.page-context__details div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.page-context__details dt {
+  color: #5c5c5c;
+  font-size: 0.75rem;
+}
+
+.page-context__details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
