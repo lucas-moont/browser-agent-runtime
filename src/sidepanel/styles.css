@@ -24,3 +24,56 @@ body {
   font-size: 1.25rem;
   font-weight: 600;
 }
+
+.capability-strip {
+  margin-top: 1.25rem;
+}
+
+.capability-strip__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5c5c5c;
+}
+
+.capability-strip__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.capability-strip__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid #e4e4e0;
+  font-size: 0.875rem;
+}
+
+.capability-strip__name {
+  font-weight: 500;
+}
+
+.capability-strip__status {
+  color: #444;
+  text-align: right;
+}
+
+.capability-strip__item[data-readiness='available'] .capability-strip__status {
+  color: #1f6b3a;
+}
+
+.capability-strip__item[data-readiness='downloadable'] .capability-strip__status,
+.capability-strip__item[data-readiness='downloading'] .capability-strip__status {
+  color: #8a5a00;
+}
+
+.capability-strip__item[data-readiness='unavailable'] .capability-strip__status {
+  color: #8a2f2f;
+}
