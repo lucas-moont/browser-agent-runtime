@@ -555,3 +555,11 @@ body {
   color: #fff;
   font-weight: 600;
 }
+
+.result-view__reply-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+

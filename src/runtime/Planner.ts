@@ -1,4 +1,4 @@
-import { resolveWorkflowId } from './demoGoals'
+import { formatConversationHistory, resolveWorkflowId } from './demoGoals'
 import {
   needsOutboundTranslation,
   parsePreferredLanguage,
@@ -40,6 +40,15 @@ const LEARNING_PATH_CONSTRAINT = {
     nextTopics: { type: 'array', items: { type: 'string' } },
   },
   required: ['prerequisites', 'concepts', 'sequence', 'nextTopics'],
+  additionalProperties: false,
+} as const
+
+const REPLY_CONSTRAINT = {
+  type: 'object',
+  properties: {
+    reply: { type: 'string' },
+  },
+  required: ['reply'],
   additionalProperties: false,
 } as const
 
@@ -203,11 +212,63 @@ function buildSummarizePagePlan(preferred: PreferredLanguage): PlanResult {
   }
 }
 
+function buildConversationalPlan(
+  preferred: PreferredLanguage,
+  goal: Goal,
+): PlanResult {
+  const workingFoundation = workingFoundationLanguage(preferred)
+  const history = formatConversationHistory(goal.context?.conversationHistory)
+  const instruction = goal.instruction.trim()
+
+  const steps: AgentStep[] = [
+    {
+      id: 'detect',
+      tool: 'detectLanguage',
+      input: { text: { $from: 'context.mainText' } },
+    },
+    {
+      id: 'summarize',
+      tool: 'summarize',
+      input: {
+        text: { $from: 'context.mainText' },
+        sourceLanguage: { $from: 'detect.language' },
+        outputLanguage: workingFoundation,
+      },
+      dependsOn: ['detect'],
+    },
+    {
+      id: 'reply',
+      tool: 'prompt',
+      input: {
+        sourceLanguage: { $from: 'detect.language' },
+        responseConstraint: REPLY_CONSTRAINT,
+        text: {
+          $concat: [
+            `You are a helpful assistant for the current browser page. Answer the user's request using the page summary. Be concise and useful.\n\nUser request:\n${instruction}\n\nPrior conversation:\n${history}\n\nPage summary:\n`,
+            { $from: 'summarize.summary' },
+            '\n\nReturn JSON with a single string field "reply" containing your answer.',
+          ],
+        },
+      },
+      dependsOn: ['summarize'],
+    },
+  ]
+
+  return {
+    ok: true,
+    plan: {
+      workflowId: 'conversational',
+      steps,
+    },
+  }
+}
+
 function planWorkflow(
   workflowId: WorkflowId,
   capabilities: CapabilitySnapshotLike,
   tools: ToolCatalogEntry[],
   preferred: PreferredLanguage,
+  goal: Goal,
 ): PlanResult {
   const baseMissing = [
     missingCapability(capabilities, 'languageDetector'),
@@ -215,9 +276,11 @@ function planWorkflow(
   ].filter((id): id is string => id !== null)
 
   const needsTranslator =
-    (workflowId === 'summarizePage' && needsOutboundTranslation(preferred)) ||
-    ((workflowId === 'analyzePage' || workflowId === 'learningPath') &&
-      needsOutboundTranslation(preferred))
+    needsOutboundTranslation(preferred) &&
+    (workflowId === 'summarizePage' ||
+      workflowId === 'analyzePage' ||
+      workflowId === 'learningPath' ||
+      workflowId === 'conversational')
 
   if (needsTranslator) {
     const translatorMissing = missingCapability(capabilities, 'translator')
@@ -226,12 +289,15 @@ function planWorkflow(
     }
   }
 
-  if (workflowId === 'learningPath') {
+  if (workflowId === 'learningPath' || workflowId === 'conversational') {
     const promptMissing = missingCapability(capabilities, 'prompt')
     if (promptMissing) {
       return {
         ok: false,
-        reason: 'Learning Path requires the Prompt capability',
+        reason:
+          workflowId === 'conversational'
+            ? 'Free-form conversation requires the Prompt capability'
+            : 'Learning Path requires the Prompt capability',
         missingCapabilities: [promptMissing, ...baseMissing],
       }
     }
@@ -243,6 +309,18 @@ function planWorkflow(
       reason: `Missing required capabilities: ${baseMissing.join(', ')}`,
       missingCapabilities: baseMissing,
     }
+  }
+
+  if (workflowId === 'conversational') {
+    const required = ['detectLanguage', 'summarize', 'prompt']
+    if (needsOutboundTranslation(preferred)) {
+      required.push('translate')
+    }
+    const toolError = requireTools(tools, required)
+    if (toolError) {
+      return { ok: false, reason: toolError }
+    }
+    return buildConversationalPlan(preferred, goal)
   }
 
   if (workflowId === 'analyzePage') {
@@ -293,16 +371,14 @@ function planWorkflow(
 export class Planner {
   plan(input: PlannerInput): PlanResult {
     const workflowId = resolveWorkflowId(input.goal.instruction)
-    if (!workflowId) {
-      return {
-        ok: false,
-        reason:
-          'Unrecognized goal; map to a demo Workflow (Analyze Page, Learning Path, or Summarize)',
-      }
-    }
-
     const preferred = preferredFromGoal(input.goal)
-    return planWorkflow(workflowId, input.capabilities, input.tools, preferred)
+    return planWorkflow(
+      workflowId,
+      input.capabilities,
+      input.tools,
+      preferred,
+      input.goal,
+    )
   }
 }
 
@@ -313,4 +389,5 @@ export function createPlanner(): Planner {
 export const PLANNER_RESPONSE_CONSTRAINTS = {
   concepts: CONCEPTS_CONSTRAINT,
   learningPath: LEARNING_PATH_CONSTRAINT,
+  reply: REPLY_CONSTRAINT,
 } as const

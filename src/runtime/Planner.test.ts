@@ -222,14 +222,57 @@ describe('Planner seam', () => {
     }
   })
 
-  it('returns cannot-plan for unrecognized goals', () => {
+  it('plans free-form goals as conversational detect → summarize → prompt reply', () => {
     const planner = createPlanner()
     const result = planner.plan({
-      goal: { instruction: 'Book me a flight to Mars' },
+      goal: {
+        instruction: 'What are the three main risks called out on this page?',
+        context: {
+          preferredLanguage: 'en',
+          conversationHistory: [
+            { role: 'user', content: 'Hi' },
+            { role: 'assistant', content: 'Hello — how can I help with this page?' },
+          ],
+        },
+      },
       capabilities: ALL_AVAILABLE,
       tools: FULL_CATALOG,
     })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.plan.workflowId).toBe('conversational')
+    expect(result.plan.steps.map((step) => step.tool)).toEqual([
+      'detectLanguage',
+      'summarize',
+      'prompt',
+    ])
+    const promptInput = result.plan.steps[2]?.input as {
+      text: { $concat: unknown[] }
+      responseConstraint: { required: string[] }
+    }
+    expect(promptInput.responseConstraint.required).toContain('reply')
+    expect(JSON.stringify(promptInput.text.$concat)).toContain('three main risks')
+    expect(JSON.stringify(promptInput.text.$concat)).toContain('Prior conversation')
+  })
+
+  it('cannot plan free-form conversation when Prompt is unavailable', () => {
+    const planner = createPlanner()
+    const result = planner.plan({
+      goal: { instruction: 'Explain this like I am five' },
+      capabilities: {
+        ...ALL_AVAILABLE,
+        prompt: 'unavailable',
+      },
+      tools: FULL_CATALOG,
+    })
     expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.reason).toMatch(/Prompt/i)
   })
 
   it('does not execute tools (planner is pure)', () => {

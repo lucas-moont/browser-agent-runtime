@@ -46,17 +46,17 @@ Result
 
 ## 2. Product Positioning
 
-This should not become "another AI browser assistant."
+Primary experience: a **conversational side panel** on the current page — users ask for what they want in natural language, in their PreferredLanguage, across multiple turns.
 
-The differentiator is the runtime architecture.
+The differentiator is still the **runtime architecture** under that chat surface: Goals become Plans over Tools, Capabilities are detected (not assumed), Results are validated, and a Runtime Trace remains inspectable.
 
-Potential positioning:
+Positioning:
 
-> A browser-native agent runtime for orchestrating local AI capabilities and web tools.
+> A browser-native conversational agent powered by an observable local runtime — Chrome Built-in AI + page tools, not a cloud chatbot wrapper.
 
-Or:
+And:
 
-> Build observable AI workflows that use the browser as both context and execution environment.
+> Chat when you want answers; expand the Trace when you want to see the system.
 
 ## 3. Target Users
 
@@ -97,7 +97,11 @@ Rules controlling what an agent is allowed to execute.
 
 ### Context
 
-Page content, selected text, metadata, user-provided input, and application state.
+Page content, selected text, metadata, user-provided input, conversation history, and application state.
+
+### Conversation
+
+Multi-turn side-panel dialogue. Each user message is a Goal; prior turns travel with the Goal as conversation history so free-form replies stay coherent. Suggestion chips are optional shortcuts into known Workflows.
 
 ### Memory
 
@@ -476,25 +480,29 @@ The product should eventually demonstrate:
 11. Strong developer experience.
 12. A clear privacy model.
 
-## 22. Relationship to the Weekend MVP
+## 22. Relationship to the shipped prototype
 
-The weekend prototype should be deliberately small.
+The prototype remains deliberately small, but the **product UX is conversational**:
 
-Do not prematurely implement:
+- chat-style Conversation in the side panel
+- PreferredLanguage for Result prose
+- free-form Goals → conversational Workflow (Prompt reply + history)
+- suggestion chips as shortcuts into Analyze / Learning Path / Summarize templates
+- Runtime Trace still inspectable under each assistant turn
+
+Still do not prematurely implement:
 
 - workflow studio
-- persistent memory
+- persistent memory beyond in-session conversation history
 - cloud fallback
 - complex evaluation
 - SDK packaging
 - advanced security
 - multi-agent collaboration
 
-Those are product evolution paths, not MVP requirements.
+Core hypothesis (still true):
 
-The prototype should prove the core architectural hypothesis:
-
-> A browser page can provide context, Chrome Built-in AI can provide local AI capabilities, and an explicit runtime can orchestrate both as tools.
+> A browser page can provide context, Chrome Built-in AI can provide local AI capabilities, and an explicit runtime can orchestrate both as tools — behind a conversational surface.
 
 ## 23. Discovery Instructions for Future Agents
 

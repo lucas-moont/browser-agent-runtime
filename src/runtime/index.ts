@@ -22,6 +22,7 @@ export {
 export {
   type Goal,
   type GoalContext,
+  type ConversationTurn,
   type AgentStep,
   type WorkflowId,
   type Plan,
@@ -42,10 +43,12 @@ export {
   analyzePageResultSchema,
   learningPathResultSchema,
   summarizePageResultSchema,
+  conversationalResultSchema,
   validateDemoResult,
   type AnalyzePageResult,
   type LearningPathResult,
   type SummarizePageResult,
+  type ConversationalResult,
   type DemoResult,
 } from './results'
 
@@ -53,6 +56,7 @@ export {
   DEMO_GOALS,
   matchDemoWorkflow,
   resolveWorkflowId,
+  formatConversationHistory,
   type DemoGoal,
 } from './demoGoals'
 

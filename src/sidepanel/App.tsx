@@ -9,6 +9,7 @@ import {
   type AgentEvent,
   type AgentRuntime,
   type AgentState,
+  type ConversationTurn,
   type PreferredLanguage,
   type WorkflowId,
 } from '../runtime'
@@ -135,6 +136,24 @@ export function App({
     }
 
     const preferred = parsePreferredLanguage(preferredLanguage)
+    const history: ConversationTurn[] = []
+    for (const message of messages) {
+      if (message.role === 'user') {
+        history.push({ role: 'user', content: message.instruction })
+        continue
+      }
+      if (message.role === 'assistant' && message.status === 'completed' && message.result) {
+        const result = message.result as { reply?: string; summary?: string }
+        const content =
+          typeof result.reply === 'string' && result.reply.trim()
+            ? result.reply
+            : typeof result.summary === 'string' && result.summary.trim()
+              ? result.summary
+              : 'Completed a structured Result for this page.'
+        history.push({ role: 'assistant', content })
+      }
+    }
+
     const userMessage: UserMessage = {
       id: nextMessageId('user'),
       role: 'user',
@@ -178,7 +197,10 @@ export function App({
       const next = await runtime.run({
         goal: {
           instruction: trimmed,
-          context: { preferredLanguage: preferred },
+          context: {
+            preferredLanguage: preferred,
+            conversationHistory: history,
+          },
         },
         tabId,
       })
@@ -286,7 +308,7 @@ export function App({
       <div className="chat-thread" ref={threadRef} aria-label="Conversation">
         {messages.length === 0 ? (
           <p className="chat-thread__empty">
-            Send a Goal to run the Agent. Runtime Trace stays visible under each Result.
+            Ask anything about this page. Suggestions below are shortcuts — you can type freely.
           </p>
         ) : null}
         {messages.map((message) => {
@@ -351,7 +373,7 @@ export function App({
 
       <footer className="chat-composer-dock">
         {showSuggestions ? (
-          <div className="suggestion-chips" role="group" aria-label="Demo Goals">
+          <div className="suggestion-chips" role="group" aria-label="Suggested prompts">
             {DEMO_GOALS.map((goal) => (
               <button
                 key={goal.id}
@@ -374,8 +396,8 @@ export function App({
             rows={2}
             value={draft}
             disabled={running}
-            placeholder="Describe a Goal for this page…"
-            aria-label="Goal instruction"
+            placeholder="Ask anything about this page…"
+            aria-label="Message"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleComposerKeyDown}
           />

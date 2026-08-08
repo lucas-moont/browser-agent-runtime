@@ -1,7 +1,7 @@
-import type { WorkflowId } from './types'
+import type { ConversationTurn, WorkflowId } from './types'
 
 export type DemoGoal = {
-  id: WorkflowId
+  id: Exclude<WorkflowId, 'conversational'>
   label: string
   instruction: string
 }
@@ -24,7 +24,16 @@ export const DEMO_GOALS: readonly DemoGoal[] = [
   },
 ] as const
 
-export function matchDemoWorkflow(instruction: string): WorkflowId | null {
+export function formatConversationHistory(history: ConversationTurn[] | undefined): string {
+  if (!history || history.length === 0) {
+    return '(none)'
+  }
+  return history
+    .map((turn) => `${turn.role === 'user' ? 'User' : 'Assistant'}: ${turn.content}`)
+    .join('\n')
+}
+
+export function matchDemoWorkflow(instruction: string): Exclude<WorkflowId, 'conversational'> | null {
   const normalized = instruction.trim().toLowerCase()
   if (!normalized) {
     return null
@@ -41,18 +50,18 @@ export function matchDemoWorkflow(instruction: string): WorkflowId | null {
   if (
     normalized.includes('analyze') ||
     normalized.includes('analyse') ||
-    normalized.includes('summary of this page') ||
     normalized.includes('key concepts')
   ) {
     return 'analyzePage'
   }
 
   if (
-    normalized.includes('summarize') ||
-    normalized.includes('summarise') ||
-    normalized.includes('portuguese') ||
-    normalized.includes('português') ||
-    normalized.includes('portugues')
+    normalized === 'summarize this page.' ||
+    normalized === 'summarize this page' ||
+    (normalized.includes('summarize') &&
+      !normalized.includes('learning') &&
+      normalized.includes('page') &&
+      normalized.split(/\s+/).length <= 6)
   ) {
     return 'summarizePage'
   }
@@ -60,12 +69,13 @@ export function matchDemoWorkflow(instruction: string): WorkflowId | null {
   return null
 }
 
-export function resolveWorkflowId(instruction: string): WorkflowId | null {
+/** Maps known demo phrasing to templates; everything else is free-form conversation. */
+export function resolveWorkflowId(instruction: string): WorkflowId {
   const exact = DEMO_GOALS.find(
     (goal) => goal.instruction.trim().toLowerCase() === instruction.trim().toLowerCase(),
   )
   if (exact) {
     return exact.id
   }
-  return matchDemoWorkflow(instruction)
+  return matchDemoWorkflow(instruction) ?? 'conversational'
 }

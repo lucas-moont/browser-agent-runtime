@@ -25,16 +25,28 @@ export const summarizePageResultSchema = z.strictObject({
   preferredLanguage: z.string().min(1),
 })
 
+export const conversationalResultSchema = z.strictObject({
+  reply: z.string(),
+  language: z.string().min(1),
+  preferredLanguage: z.string().min(1),
+})
+
 export type AnalyzePageResult = z.infer<typeof analyzePageResultSchema>
 export type LearningPathResult = z.infer<typeof learningPathResultSchema>
 export type SummarizePageResult = z.infer<typeof summarizePageResultSchema>
+export type ConversationalResult = z.infer<typeof conversationalResultSchema>
 
-export type DemoResult = AnalyzePageResult | LearningPathResult | SummarizePageResult
+export type DemoResult =
+  | AnalyzePageResult
+  | LearningPathResult
+  | SummarizePageResult
+  | ConversationalResult
 
 const RESULT_SCHEMAS: Record<WorkflowId, z.ZodType<DemoResult>> = {
   analyzePage: analyzePageResultSchema,
   learningPath: learningPathResultSchema,
   summarizePage: summarizePageResultSchema,
+  conversational: conversationalResultSchema,
 }
 
 export function validateDemoResult(

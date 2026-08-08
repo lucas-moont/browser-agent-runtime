@@ -7,12 +7,12 @@ Domain language for a browser-native agent runtime that orchestrates Chrome Buil
 ### Runtime
 
 **Agent**:
-A goal-oriented execution unit that obtains PageContext, forms a Plan, and runs a Workflow over Tools under Policy.
-_Avoid_: chatbot, assistant, bot, LLM wrapper
+A goal-oriented execution unit that obtains PageContext, forms a Plan, and runs a Workflow over Tools under Policy — including free-form Conversation turns.
+_Avoid_: LLM wrapper, single-prompt bot
 
 **Goal**:
-The user's natural-language instruction the Agent is asked to satisfy for the current page.
-_Avoid_: prompt, query, request, chat message
+The user's natural-language instruction for the current turn (typed freely or via a suggestion shortcut).
+_Avoid_: prompt (alone), query, request
 
 **Plan**:
 The concrete ordered list of Steps chosen for a Goal before execution begins.
@@ -23,12 +23,12 @@ One planned Tool invocation within a Plan, optionally depending on earlier Steps
 _Avoid_: action, task, node, operation
 
 **Workflow**:
-A known sequence shape (template or resolved Plan) that realizes a Goal through ordered Tool use.
+A known sequence shape (template or conversational Plan) that realizes a Goal through ordered Tool use.
 _Avoid_: pipeline, script, automation, playbook
 
 **Result**:
-The structured outcome produced when a run completes successfully for a Goal.
-_Avoid_: response, answer, reply, completion
+The outcome of a successful run — structured fields for known Workflows, or a conversational `reply` string for free-form turns.
+_Avoid_: completion (alone)
 
 ### Tools and constraints
 
@@ -69,12 +69,16 @@ _Avoid_: log line, message, notification, span
 ### Side panel conversation
 
 **Conversation**:
-The sequence of user Goals and assistant Results shown in the side panel thread for the current session.
-_Avoid_: chat history, transcript, session log (alone)
+The multi-turn side-panel thread; prior Messages are passed into the next Goal as `conversationHistory` so free-form replies can stay coherent.
+_Avoid_: session log (alone)
 
 **Message**:
 One turn in the Conversation — either a user Goal instruction or an assistant Result (with status, optional error, and expandable Runtime Trace).
-_Avoid_: chat bubble (as domain term), reply, post
+_Avoid_: post
+
+**Conversational Workflow**:
+The default Workflow for free-form Goals that do not match a suggestion template: detect → summarize PageContext → Prompt a `reply` using the user request, conversation history, and page summary.
+_Avoid_: open chat mode (as a separate product)
 
 ### Languages
 

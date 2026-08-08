@@ -1,5 +1,12 @@
+export type ConversationTurn = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export type GoalContext = {
   preferredLanguage?: string
+  /** Prior turns in the side-panel Conversation (excluding the current Goal). */
+  conversationHistory?: ConversationTurn[]
 }
 
 export type Goal = {
@@ -14,7 +21,11 @@ export type AgentStep = {
   dependsOn?: string[]
 }
 
-export type WorkflowId = 'analyzePage' | 'learningPath' | 'summarizePage'
+export type WorkflowId =
+  | 'analyzePage'
+  | 'learningPath'
+  | 'summarizePage'
+  | 'conversational'
 
 export type Plan = {
   workflowId: WorkflowId

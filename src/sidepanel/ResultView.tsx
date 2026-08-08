@@ -1,5 +1,6 @@
 import type {
   AnalyzePageResult,
+  ConversationalResult,
   DemoResult,
   LearningPathResult,
   SummarizePageResult,
@@ -112,6 +113,14 @@ function SummarizePageResultView({ result }: { result: SummarizePageResult }) {
   )
 }
 
+function ConversationalResultView({ result }: { result: ConversationalResult }) {
+  return (
+    <div className="result-view__reply">
+      <p className="result-view__reply-text">{result.reply || '—'}</p>
+    </div>
+  )
+}
+
 export function ResultView({
   workflowId,
   result,
@@ -141,7 +150,9 @@ export function ResultView({
       aria-label="Result"
       data-workflow={workflowId}
     >
-      {compact ? null : <h2 className="section-title">Result</h2>}
+      {compact || workflowId === 'conversational' ? null : (
+        <h2 className="section-title">Result</h2>
+      )}
       {workflowId === 'analyzePage' ? (
         <AnalyzeResultView result={demoResult as AnalyzePageResult} />
       ) : null}
@@ -150,6 +161,9 @@ export function ResultView({
       ) : null}
       {workflowId === 'summarizePage' ? (
         <SummarizePageResultView result={demoResult as SummarizePageResult} />
+      ) : null}
+      {workflowId === 'conversational' ? (
+        <ConversationalResultView result={demoResult as ConversationalResult} />
       ) : null}
     </section>
   )

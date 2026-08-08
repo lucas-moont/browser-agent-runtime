@@ -88,7 +88,8 @@ describe('side panel chat shell', () => {
     expect(container.querySelector('[aria-label="Preferred response language"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Built-in AI capabilities"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Conversation"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Goal instruction"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Message"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Suggested prompts"]')).not.toBeNull()
 
     for (const goal of DEMO_GOALS) {
       expect(container.textContent).toContain(goal.label)
@@ -160,7 +161,7 @@ describe('side panel chat shell', () => {
     expect(runtime.run).toHaveBeenCalledWith({
       goal: {
         instruction: DEMO_GOALS[0].instruction,
-        context: { preferredLanguage: 'pt' },
+        context: { preferredLanguage: 'pt', conversationHistory: [] },
       },
       tabId: 7,
     })
@@ -218,7 +219,7 @@ describe('side panel chat shell', () => {
     mounts.push({ container, root })
 
     const textarea = container.querySelector(
-      '[aria-label="Goal instruction"]',
+      '[aria-label="Message"]',
     ) as HTMLTextAreaElement
     const setNativeValue = Object.getOwnPropertyDescriptor(
       window.HTMLTextAreaElement.prototype,
@@ -247,7 +248,7 @@ describe('side panel chat shell', () => {
     expect(runtime.run).toHaveBeenCalledWith({
       goal: {
         instruction: 'Summarize this page.',
-        context: { preferredLanguage: 'en' },
+        context: { preferredLanguage: 'en', conversationHistory: [] },
       },
       tabId: 1,
     })

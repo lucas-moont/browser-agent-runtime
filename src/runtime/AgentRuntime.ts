@@ -122,6 +122,26 @@ function buildSummarizePageResult(
   }
 }
 
+function buildConversationalResult(
+  outputs: Record<string, unknown>,
+  preferred: PreferredLanguage,
+): unknown {
+  const detect = asRecord(outputs.detect)
+  const replyOut = asRecord(outputs.reply)
+  const structured = asRecord(replyOut.structured)
+  const reply =
+    typeof structured.reply === 'string'
+      ? structured.reply
+      : typeof replyOut.text === 'string'
+        ? replyOut.text
+        : ''
+  return {
+    reply,
+    language: detect.language ?? 'unknown',
+    preferredLanguage: preferred,
+  }
+}
+
 function buildResult(
   workflowId: WorkflowId,
   outputs: Record<string, unknown>,
@@ -132,6 +152,9 @@ function buildResult(
   }
   if (workflowId === 'learningPath') {
     return buildLearningPathResult(outputs, preferred)
+  }
+  if (workflowId === 'conversational') {
+    return buildConversationalResult(outputs, preferred)
   }
   return buildSummarizePageResult(outputs, preferred)
 }

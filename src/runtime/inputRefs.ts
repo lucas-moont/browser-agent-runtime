@@ -52,8 +52,21 @@ export function resolveStepInput(
   }
 
   if (input !== null && typeof input === 'object') {
+    const record = input as Record<string, unknown>
+    if (Array.isArray(record.$concat)) {
+      return record.$concat
+        .map((part) => {
+          const resolved = resolveStepInput(part, outputs, context)
+          if (resolved === null || resolved === undefined) {
+            return ''
+          }
+          return typeof resolved === 'string' ? resolved : String(resolved)
+        })
+        .join('')
+    }
+
     const result: Record<string, unknown> = {}
-    for (const [key, value] of Object.entries(input)) {
+    for (const [key, value] of Object.entries(record)) {
       result[key] = resolveStepInput(value, outputs, context)
     }
     return result
