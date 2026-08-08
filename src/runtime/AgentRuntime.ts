@@ -2,6 +2,12 @@ import type { CapabilityRegistry, CapabilitySnapshot } from '../capabilities/Cap
 import type { ToolRegistry } from '../tools/ToolRegistry'
 import { createAllowByDefaultPolicy, type Policy } from './policy'
 import { createPlanner, type Planner } from './Planner'
+import {
+  needsOutboundTranslation,
+  parsePreferredLanguage,
+  workingFoundationLanguage,
+  type PreferredLanguage,
+} from './preferredLanguage'
 import { validateDemoResult } from './results'
 import type {
   AgentEvent,
@@ -27,6 +33,13 @@ export type AgentRunOptions = {
   goal: Goal
   tabId?: number
 }
+
+const LOCALIZE_SKIP_KEYS = new Set([
+  'language',
+  'foundationLanguage',
+  'preferredLanguage',
+  'translatedInbound',
+])
 
 function emptyState(): AgentState {
   return {
@@ -54,7 +67,14 @@ function asRecord(value: unknown): Record<string, unknown> {
   return {}
 }
 
-function buildAnalyzeResult(outputs: Record<string, unknown>): unknown {
+function preferredFromGoal(goal: Goal): PreferredLanguage {
+  return parsePreferredLanguage(goal.context?.preferredLanguage)
+}
+
+function buildAnalyzeResult(
+  outputs: Record<string, unknown>,
+  preferred: PreferredLanguage,
+): unknown {
   const detect = asRecord(outputs.detect)
   const summarize = asRecord(outputs.summarize)
   const conceptsOut = asRecord(outputs.concepts)
@@ -64,10 +84,14 @@ function buildAnalyzeResult(outputs: Record<string, unknown>): unknown {
     summary: summarize.summary ?? '',
     topics: structured.topics ?? [],
     concepts: structured.concepts ?? [],
+    preferredLanguage: preferred,
   }
 }
 
-function buildLearningPathResult(outputs: Record<string, unknown>): unknown {
+function buildLearningPathResult(
+  outputs: Record<string, unknown>,
+  preferred: PreferredLanguage,
+): unknown {
   const learning = asRecord(outputs.learningPath)
   const structured = asRecord(learning.structured)
   return {
@@ -75,29 +99,97 @@ function buildLearningPathResult(outputs: Record<string, unknown>): unknown {
     concepts: structured.concepts ?? [],
     sequence: structured.sequence ?? [],
     nextTopics: structured.nextTopics ?? [],
+    preferredLanguage: preferred,
   }
 }
 
-function buildSummarizeInPortugueseResult(outputs: Record<string, unknown>): unknown {
+function buildSummarizePageResult(
+  outputs: Record<string, unknown>,
+  preferred: PreferredLanguage,
+): unknown {
   const detect = asRecord(outputs.detect)
   const summarize = asRecord(outputs.summarize)
-  const translatePt = asRecord(outputs.translatePt)
+  const translateOut = asRecord(outputs.translateResult)
+  const summary = needsOutboundTranslation(preferred)
+    ? (translateOut.text ?? '')
+    : (summarize.summary ?? '')
   return {
     language: detect.language ?? 'unknown',
-    summaryPt: translatePt.text ?? '',
+    summary,
     foundationLanguage: summarize.foundationLanguage ?? 'en',
     translatedInbound: Boolean(summarize.translatedInbound),
+    preferredLanguage: preferred,
   }
 }
 
-function buildResult(workflowId: WorkflowId, outputs: Record<string, unknown>): unknown {
+function buildResult(
+  workflowId: WorkflowId,
+  outputs: Record<string, unknown>,
+  preferred: PreferredLanguage,
+): unknown {
   if (workflowId === 'analyzePage') {
-    return buildAnalyzeResult(outputs)
+    return buildAnalyzeResult(outputs, preferred)
   }
   if (workflowId === 'learningPath') {
-    return buildLearningPathResult(outputs)
+    return buildLearningPathResult(outputs, preferred)
   }
-  return buildSummarizeInPortugueseResult(outputs)
+  return buildSummarizePageResult(outputs, preferred)
+}
+
+async function translateString(
+  tools: ToolRegistry,
+  text: string,
+  sourceLanguage: string,
+  targetLanguage: string,
+): Promise<string> {
+  if (!text) {
+    return text
+  }
+  const translated = await tools.execute('translate', {
+    text,
+    sourceLanguage,
+    targetLanguage,
+  })
+  const record = asRecord(translated)
+  return typeof record.text === 'string' ? record.text : text
+}
+
+export async function localizeResult(
+  result: unknown,
+  preferred: PreferredLanguage,
+  tools: ToolRegistry,
+  sourceLanguage: string,
+): Promise<unknown> {
+  if (!needsOutboundTranslation(preferred)) {
+    return result
+  }
+
+  async function walk(value: unknown, key?: string): Promise<unknown> {
+    if (typeof value === 'string') {
+      if (key && LOCALIZE_SKIP_KEYS.has(key)) {
+        return value
+      }
+      return translateString(tools, value, sourceLanguage, preferred)
+    }
+    if (Array.isArray(value)) {
+      const next: unknown[] = []
+      for (const item of value) {
+        next.push(await walk(item))
+      }
+      return next
+    }
+    if (value !== null && typeof value === 'object') {
+      const record = value as Record<string, unknown>
+      const next: Record<string, unknown> = {}
+      for (const [entryKey, entryValue] of Object.entries(record)) {
+        next[entryKey] = await walk(entryValue, entryKey)
+      }
+      return next
+    }
+    return value
+  }
+
+  return walk(result)
 }
 
 export class AgentRuntime {
@@ -166,6 +258,8 @@ export class AgentRuntime {
       return this.fail(policyDecision.reason)
     }
 
+    const preferred = preferredFromGoal(options.goal)
+    const workingFoundation = workingFoundationLanguage(preferred)
     const toolContext = options.tabId !== undefined ? { tabId: options.tabId } : undefined
 
     let pageContext: unknown
@@ -181,7 +275,10 @@ export class AgentRuntime {
     let snapshot: CapabilitySnapshot
     try {
       snapshot = await this.capabilities.snapshot({
-        translator: { sourceLanguage: 'en', targetLanguage: 'pt' },
+        translator: {
+          sourceLanguage: workingFoundation,
+          targetLanguage: preferred,
+        },
       })
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Capability probe failed'
@@ -235,7 +332,26 @@ export class AgentRuntime {
       return this.fail(execution.reason)
     }
 
-    const rawResult = buildResult(plan.workflowId, execution.outputs)
+    let rawResult = buildResult(plan.workflowId, execution.outputs, preferred)
+
+    if (
+      (plan.workflowId === 'analyzePage' || plan.workflowId === 'learningPath') &&
+      needsOutboundTranslation(preferred)
+    ) {
+      try {
+        rawResult = await localizeResult(
+          rawResult,
+          preferred,
+          this.tools,
+          workingFoundation,
+        )
+      } catch (error) {
+        const reason =
+          error instanceof Error ? error.message : 'Failed to localize Result'
+        return this.fail(reason)
+      }
+    }
+
     const validated = validateDemoResult(plan.workflowId, rawResult)
     if (!validated.ok) {
       return this.fail('Result failed Zod validation')

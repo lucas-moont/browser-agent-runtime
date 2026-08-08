@@ -18,9 +18,9 @@ export const DEMO_GOALS: readonly DemoGoal[] = [
     instruction: 'Turn this page into a learning path.',
   },
   {
-    id: 'summarizeInPortuguese',
-    label: 'Summarize in Portuguese',
-    instruction: 'Summarize this page in Portuguese.',
+    id: 'summarizePage',
+    label: 'Summarize',
+    instruction: 'Summarize this page.',
   },
 ] as const
 
@@ -28,15 +28,6 @@ export function matchDemoWorkflow(instruction: string): WorkflowId | null {
   const normalized = instruction.trim().toLowerCase()
   if (!normalized) {
     return null
-  }
-
-  if (
-    normalized.includes('portuguese') ||
-    normalized.includes('português') ||
-    normalized.includes('portugues') ||
-    /\bin pt\b/.test(normalized)
-  ) {
-    return 'summarizeInPortuguese'
   }
 
   if (
@@ -56,8 +47,14 @@ export function matchDemoWorkflow(instruction: string): WorkflowId | null {
     return 'analyzePage'
   }
 
-  if (normalized.includes('summarize') || normalized.includes('summarise')) {
-    return 'summarizeInPortuguese'
+  if (
+    normalized.includes('summarize') ||
+    normalized.includes('summarise') ||
+    normalized.includes('portuguese') ||
+    normalized.includes('português') ||
+    normalized.includes('portugues')
+  ) {
+    return 'summarizePage'
   }
 
   return null

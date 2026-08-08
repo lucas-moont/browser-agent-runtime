@@ -12,7 +12,16 @@ export {
 } from './foundationLanguage'
 
 export {
+  PREFERRED_LANGUAGES,
+  parsePreferredLanguage,
+  needsOutboundTranslation,
+  workingFoundationLanguage,
+  type PreferredLanguage,
+} from './preferredLanguage'
+
+export {
   type Goal,
+  type GoalContext,
   type AgentStep,
   type WorkflowId,
   type Plan,
@@ -32,11 +41,11 @@ export { createAllowByDefaultPolicy, type Policy, type PolicyDecision, type Poli
 export {
   analyzePageResultSchema,
   learningPathResultSchema,
-  summarizeInPortugueseResultSchema,
+  summarizePageResultSchema,
   validateDemoResult,
   type AnalyzePageResult,
   type LearningPathResult,
-  type SummarizeInPortugueseResult,
+  type SummarizePageResult,
   type DemoResult,
 } from './results'
 
@@ -68,6 +77,7 @@ export {
 export {
   AgentRuntime,
   createAgentRuntime,
+  localizeResult,
   type AgentRuntimeDeps,
   type AgentRunOptions,
 } from './AgentRuntime'

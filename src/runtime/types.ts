@@ -1,6 +1,10 @@
+export type GoalContext = {
+  preferredLanguage?: string
+}
+
 export type Goal = {
   instruction: string
-  context?: unknown
+  context?: GoalContext
 }
 
 export type AgentStep = {
@@ -10,7 +14,7 @@ export type AgentStep = {
   dependsOn?: string[]
 }
 
-export type WorkflowId = 'analyzePage' | 'learningPath' | 'summarizeInPortuguese'
+export type WorkflowId = 'analyzePage' | 'learningPath' | 'summarizePage'
 
 export type Plan = {
   workflowId: WorkflowId

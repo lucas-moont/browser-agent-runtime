@@ -20,7 +20,8 @@ function fakeCapabilities(
     async get(id) {
       return snapshot[id]
     },
-    async snapshot() {
+    async snapshot(options) {
+      void options
       return snapshot
     },
   } as CapabilityRegistry
@@ -110,10 +111,18 @@ function registerFakeTools(
       const sourceLanguage = input.sourceLanguage ?? language
       const translatedInbound = sourceLanguage === 'pt'
       expect(input.outputLanguage).not.toBe('pt')
+      const foundationLanguage =
+        input.outputLanguage === 'ja' ||
+        input.outputLanguage === 'es' ||
+        input.outputLanguage === 'de' ||
+        input.outputLanguage === 'fr' ||
+        input.outputLanguage === 'en'
+          ? input.outputLanguage
+          : ('en' as const)
       return {
         summary: `SUMMARY(${sourceLanguage}):${input.text}`,
         sourceLanguage,
-        foundationLanguage: 'en' as const,
+        foundationLanguage,
         translatedInbound,
       }
     },
@@ -245,6 +254,7 @@ describe('AgentRuntime seam', () => {
       summary: 'SUMMARY(en):Hello from the page',
       topics: ['Runtime', 'Planning'],
       concepts: ['Agent', 'Tool'],
+      preferredLanguage: 'en',
     })
   })
 
@@ -266,31 +276,90 @@ describe('AgentRuntime seam', () => {
       concepts: ['DOM'],
       sequence: ['Read page', 'Practice'],
       nextTopics: ['Events'],
+      preferredLanguage: 'en',
     })
   })
 
-  it('runs Summarize in Portuguese via foundation summarize then translate to pt', async () => {
+  it('runs summarizePage with preferred=pt via foundation summarize then translate', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
       tools: registerFakeTools('pt'),
     })
 
     const state = await runtime.run({
-      goal: { instruction: 'Summarize this page in Portuguese.' },
+      goal: {
+        instruction: 'Summarize this page.',
+        context: { preferredLanguage: 'pt' },
+      },
       tabId: 1,
     })
 
     expect(state.status).toBe('completed')
+    expect(state.workflowId).toBe('summarizePage')
     expect(state.result).toEqual({
       language: 'pt',
-      summaryPt: '[en->pt]SUMMARY(pt):Olá mundo da página',
+      summary: '[en->pt]SUMMARY(pt):Olá mundo da página',
       foundationLanguage: 'en',
       translatedInbound: true,
+      preferredLanguage: 'pt',
     })
     const translateEvent = state.events.find(
       (event) => event.type === 'tool_completed' && event.tool === 'translate',
     )
     expect(translateEvent).toBeTruthy()
+  })
+
+  it('runs summarizePage with preferred=en without outbound translate', async () => {
+    const runtime = createAgentRuntime({
+      capabilities: fakeCapabilities(),
+      tools: registerFakeTools('en'),
+    })
+
+    const state = await runtime.run({
+      goal: {
+        instruction: 'Summarize this page.',
+        context: { preferredLanguage: 'en' },
+      },
+      tabId: 1,
+    })
+
+    expect(state.status).toBe('completed')
+    expect(state.result).toEqual({
+      language: 'en',
+      summary: 'SUMMARY(en):Hello from the page',
+      foundationLanguage: 'en',
+      translatedInbound: false,
+      preferredLanguage: 'en',
+    })
+    expect(
+      state.events.some(
+        (event) => event.type === 'tool_completed' && event.tool === 'translate',
+      ),
+    ).toBe(false)
+  })
+
+  it('localizes analyzePage Result strings when preferred needs outbound translation', async () => {
+    const runtime = createAgentRuntime({
+      capabilities: fakeCapabilities(),
+      tools: registerFakeTools('en'),
+    })
+
+    const state = await runtime.run({
+      goal: {
+        instruction: 'Analyze this page.',
+        context: { preferredLanguage: 'pt' },
+      },
+      tabId: 1,
+    })
+
+    expect(state.status).toBe('completed')
+    expect(state.result).toEqual({
+      language: 'en',
+      summary: '[en->pt]SUMMARY(en):Hello from the page',
+      topics: ['[en->pt]Runtime', '[en->pt]Planning'],
+      concepts: ['[en->pt]Agent', '[en->pt]Tool'],
+      preferredLanguage: 'pt',
+    })
   })
 
   it('fails when required capability is unavailable without calling unavailable tools', async () => {

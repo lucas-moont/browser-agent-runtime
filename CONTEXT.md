@@ -66,6 +66,16 @@ _Avoid_: log, timeline, history, chain-of-thought, debug dump
 A discrete, named milestone in a run that appears in the Trace (for example goal received, plan created, tool completed).
 _Avoid_: log line, message, notification, span
 
+### Side panel conversation
+
+**Conversation**:
+The sequence of user Goals and assistant Results shown in the side panel thread for the current session.
+_Avoid_: chat history, transcript, session log (alone)
+
+**Message**:
+One turn in the Conversation — either a user Goal instruction or an assistant Result (with status, optional error, and expandable Runtime Trace).
+_Avoid_: chat bubble (as domain term), reply, post
+
 ### Languages
 
 **FoundationLanguage**:
@@ -75,6 +85,10 @@ _Avoid_: model language, summarizer language, prompt language
 **TranslationLanguage**:
 A language supported by the Translator Capability, a broader set that includes codes (such as `pt`) outside FoundationLanguage.
 _Avoid_: target language, locale, BCP-47 code (alone)
+
+**PreferredLanguage**:
+The user's chosen language for Agent Result prose in the side panel; may be a FoundationLanguage or a TranslationLanguage (MVP UI: `en`, `ja`, `es`, `de`, `fr`, `pt`). When it is not a FoundationLanguage, the runtime plans or post-processes outbound Translator steps instead of asking Summarizer/Prompt for non-foundation I/O.
+_Avoid_: locale, UI language, display language (alone)
 
 ### Future composition
 

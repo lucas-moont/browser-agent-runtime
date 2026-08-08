@@ -39,9 +39,10 @@ function fakeRuntime(finalState: AgentState): AgentRuntime {
 
   return {
     getState: () => ({ ...state, events: [...state.events], plan: [...state.plan] }),
-    run: vi.fn(async () => {
+    run: vi.fn(async (options) => {
       state = {
         ...finalState,
+        goal: options.goal,
         events: [...finalState.events],
         plan: [...finalState.plan],
       }
@@ -50,12 +51,12 @@ function fakeRuntime(finalState: AgentState): AgentRuntime {
   } as unknown as AgentRuntime
 }
 
-describe('side panel shell', () => {
+describe('side panel chat shell', () => {
   it('exposes the project title', () => {
     expect(APP_TITLE).toBe('Browser Agent Runtime')
   })
 
-  it('renders developer-tool chrome with Trace primary and demo Goals', async () => {
+  it('renders chat chrome with language select, capabilities, and demo chips', async () => {
     const { container, root } = mount(
       <App
         createRuntime={() =>
@@ -84,22 +85,21 @@ describe('side panel shell', () => {
     })
 
     expect(container.querySelector('h1')?.textContent).toBe(APP_TITLE)
-    expect(container.querySelector('[aria-label="Agent Trace"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Preferred response language"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Built-in AI capabilities"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Agent status"]')?.textContent).toContain('Idle')
+    expect(container.querySelector('[aria-label="Conversation"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Goal instruction"]')).not.toBeNull()
 
     for (const goal of DEMO_GOALS) {
       expect(container.textContent).toContain(goal.label)
     }
 
-    expect(container.textContent).toContain('Language Detector')
-    expect(container.textContent).toContain('Available')
-    expect(container.textContent).toContain(
-      'Unavailable — enable Built-in AI or use a supported device',
-    )
+    expect(DEMO_GOALS.some((goal) => goal.label === 'Summarize')).toBe(true)
+    expect(container.textContent).toContain('Detect')
+    expect(container.textContent).toContain('Off')
   })
 
-  it('runs a Goal and binds Trace + Result from AgentRuntime state', async () => {
+  it('sends a Goal from a suggestion chip with preferred language context', async () => {
     const completed: AgentState = {
       status: 'completed',
       goal: { instruction: DEMO_GOALS[0].instruction },
@@ -120,6 +120,7 @@ describe('side panel shell', () => {
         summary: 'A short summary',
         topics: ['runtime'],
         concepts: ['Plan', 'Trace'],
+        preferredLanguage: 'pt',
       },
     }
 
@@ -138,32 +139,121 @@ describe('side panel shell', () => {
     )
     mounts.push({ container, root })
 
-    const runButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run',
+    const languageSelect = container.querySelector(
+      '[aria-label="Preferred response language"]',
+    ) as HTMLSelectElement
+    await act(async () => {
+      languageSelect.value = 'pt'
+      languageSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    const analyzeChip = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Analyze Page',
     )
-    expect(runButton).toBeTruthy()
+    expect(analyzeChip).toBeTruthy()
 
     await act(async () => {
-      runButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      analyzeChip?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
 
     expect(runtime.run).toHaveBeenCalledWith({
-      goal: { instruction: DEMO_GOALS[0].instruction },
+      goal: {
+        instruction: DEMO_GOALS[0].instruction,
+        context: { preferredLanguage: 'pt' },
+      },
       tabId: 7,
     })
 
+    expect(container.querySelector('[data-role="user"]')?.textContent).toContain(
+      DEMO_GOALS[0].instruction,
+    )
+    expect(container.querySelector('[data-role="assistant"]')).not.toBeNull()
+    expect(container.textContent).toContain('Completed')
+    expect(container.textContent).toContain('A short summary')
+    expect(container.querySelector('[data-workflow="analyzePage"]')).not.toBeNull()
+
+    const traceSummary = Array.from(container.querySelectorAll('summary')).find(
+      (node) => node.textContent === 'Runtime trace',
+    )
+    expect(traceSummary).toBeTruthy()
+    await act(async () => {
+      traceSummary?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
     for (const event of completed.events) {
       expect(container.textContent).toContain(formatTraceEventLabel(event))
     }
-
-    expect(container.textContent).toContain('Completed')
-    expect(container.textContent).toContain('A short summary')
-    expect(container.textContent).toContain('Plan')
-    expect(container.querySelector('[data-workflow="analyzePage"]')).not.toBeNull()
   })
 
-  it('shows unsupported capability errors from failed runs', async () => {
+  it('sends composer text on Enter and keeps Shift+Enter from submitting', async () => {
+    const completed: AgentState = {
+      status: 'completed',
+      goal: { instruction: 'Summarize this page.' },
+      context: null,
+      plan: [],
+      workflowId: 'summarizePage',
+      outputs: {},
+      events: [{ type: 'agent_completed', at: 1 }],
+      result: {
+        language: 'en',
+        summary: 'Resumo',
+        foundationLanguage: 'en',
+        translatedInbound: false,
+        preferredLanguage: 'en',
+      },
+    }
+    const runtime = fakeRuntime(completed)
+    const { container, root } = mount(
+      <App
+        createRuntime={() => runtime}
+        resolveTabId={async () => 1}
+        loadCapabilities={async () => ({
+          languageDetector: 'available',
+          summarizer: 'available',
+          translator: 'available',
+          prompt: 'available',
+        })}
+      />,
+    )
+    mounts.push({ container, root })
+
+    const textarea = container.querySelector(
+      '[aria-label="Goal instruction"]',
+    ) as HTMLTextAreaElement
+    const setNativeValue = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      'value',
+    )?.set
+
+    await act(async () => {
+      setNativeValue?.call(textarea, 'line one')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }),
+      )
+      await Promise.resolve()
+    })
+    expect(runtime.run).not.toHaveBeenCalled()
+
+    await act(async () => {
+      setNativeValue?.call(textarea, 'Summarize this page.')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      textarea.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      )
+      await Promise.resolve()
+    })
+
+    expect(runtime.run).toHaveBeenCalledWith({
+      goal: {
+        instruction: 'Summarize this page.',
+        context: { preferredLanguage: 'en' },
+      },
+      tabId: 1,
+    })
+  })
+
+  it('shows unsupported capability errors inside the assistant bubble', async () => {
     const failed: AgentState = {
       status: 'failed',
       goal: { instruction: DEMO_GOALS[1].instruction },
@@ -200,13 +290,6 @@ describe('side panel shell', () => {
     )
     await act(async () => {
       pathChip?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-
-    const runButton = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Run',
-    )
-    await act(async () => {
-      runButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       await Promise.resolve()
     })
 

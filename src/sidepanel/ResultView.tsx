@@ -2,7 +2,7 @@ import type {
   AnalyzePageResult,
   DemoResult,
   LearningPathResult,
-  SummarizeInPortugueseResult,
+  SummarizePageResult,
   WorkflowId,
 } from '../runtime'
 
@@ -42,6 +42,10 @@ function AnalyzeResultView({ result }: { result: AnalyzePageResult }) {
           <StringList items={result.concepts} />
         </dd>
       </div>
+      <div>
+        <dt>Preferred language</dt>
+        <dd>{result.preferredLanguage}</dd>
+      </div>
     </dl>
   )
 }
@@ -73,11 +77,15 @@ function LearningPathResultView({ result }: { result: LearningPathResult }) {
           <StringList items={result.nextTopics} />
         </dd>
       </div>
+      <div>
+        <dt>Preferred language</dt>
+        <dd>{result.preferredLanguage}</dd>
+      </div>
     </dl>
   )
 }
 
-function SummarizePtResultView({ result }: { result: SummarizeInPortugueseResult }) {
+function SummarizePageResultView({ result }: { result: SummarizePageResult }) {
   return (
     <dl className="result-view__fields">
       <div>
@@ -85,12 +93,16 @@ function SummarizePtResultView({ result }: { result: SummarizeInPortugueseResult
         <dd>{result.language}</dd>
       </div>
       <div>
-        <dt>Summary (Portuguese)</dt>
-        <dd>{result.summaryPt || '—'}</dd>
+        <dt>Summary</dt>
+        <dd>{result.summary || '—'}</dd>
       </div>
       <div>
         <dt>Foundation language</dt>
         <dd>{result.foundationLanguage}</dd>
+      </div>
+      <div>
+        <dt>Preferred language</dt>
+        <dd>{result.preferredLanguage}</dd>
       </div>
       <div>
         <dt>Translated inbound</dt>
@@ -103,11 +115,16 @@ function SummarizePtResultView({ result }: { result: SummarizeInPortugueseResult
 export function ResultView({
   workflowId,
   result,
+  compact = false,
 }: {
   workflowId?: WorkflowId
   result?: unknown
+  compact?: boolean
 }) {
   if (!result || !workflowId) {
+    if (compact) {
+      return null
+    }
     return (
       <section className="result-view" aria-label="Result">
         <h2 className="section-title">Result</h2>
@@ -119,16 +136,20 @@ export function ResultView({
   const demoResult = result as DemoResult
 
   return (
-    <section className="result-view" aria-label="Result" data-workflow={workflowId}>
-      <h2 className="section-title">Result</h2>
+    <section
+      className={compact ? 'result-view result-view--compact' : 'result-view'}
+      aria-label="Result"
+      data-workflow={workflowId}
+    >
+      {compact ? null : <h2 className="section-title">Result</h2>}
       {workflowId === 'analyzePage' ? (
         <AnalyzeResultView result={demoResult as AnalyzePageResult} />
       ) : null}
       {workflowId === 'learningPath' ? (
         <LearningPathResultView result={demoResult as LearningPathResult} />
       ) : null}
-      {workflowId === 'summarizeInPortuguese' ? (
-        <SummarizePtResultView result={demoResult as SummarizeInPortugueseResult} />
+      {workflowId === 'summarizePage' ? (
+        <SummarizePageResultView result={demoResult as SummarizePageResult} />
       ) : null}
     </section>
   )

@@ -6,6 +6,7 @@ export const analyzePageResultSchema = z.strictObject({
   summary: z.string(),
   topics: z.array(z.string()),
   concepts: z.array(z.string()),
+  preferredLanguage: z.string().min(1),
 })
 
 export const learningPathResultSchema = z.strictObject({
@@ -13,28 +14,27 @@ export const learningPathResultSchema = z.strictObject({
   concepts: z.array(z.string()),
   sequence: z.array(z.string()),
   nextTopics: z.array(z.string()),
+  preferredLanguage: z.string().min(1),
 })
 
-export const summarizeInPortugueseResultSchema = z.strictObject({
+export const summarizePageResultSchema = z.strictObject({
   language: z.string().min(1),
-  summaryPt: z.string(),
+  summary: z.string(),
   foundationLanguage: z.string().min(1),
   translatedInbound: z.boolean(),
+  preferredLanguage: z.string().min(1),
 })
 
 export type AnalyzePageResult = z.infer<typeof analyzePageResultSchema>
 export type LearningPathResult = z.infer<typeof learningPathResultSchema>
-export type SummarizeInPortugueseResult = z.infer<typeof summarizeInPortugueseResultSchema>
+export type SummarizePageResult = z.infer<typeof summarizePageResultSchema>
 
-export type DemoResult =
-  | AnalyzePageResult
-  | LearningPathResult
-  | SummarizeInPortugueseResult
+export type DemoResult = AnalyzePageResult | LearningPathResult | SummarizePageResult
 
 const RESULT_SCHEMAS: Record<WorkflowId, z.ZodType<DemoResult>> = {
   analyzePage: analyzePageResultSchema,
   learningPath: learningPathResultSchema,
-  summarizeInPortuguese: summarizeInPortugueseResultSchema,
+  summarizePage: summarizePageResultSchema,
 }
 
 export function validateDemoResult(

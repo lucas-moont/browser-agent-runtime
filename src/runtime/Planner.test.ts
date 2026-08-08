@@ -39,6 +39,7 @@ describe('Planner seam', () => {
     expect(result.plan.steps.map((step) => step.id)).toEqual(['detect', 'summarize', 'concepts'])
     expect(result.plan.steps[1]?.dependsOn).toEqual(['detect'])
     expect(result.plan.steps[2]?.dependsOn).toEqual(['summarize'])
+    expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'en' })
     expect(result.plan.steps[2]?.input).toMatchObject({
       responseConstraint: expect.objectContaining({
         required: expect.arrayContaining(['concepts', 'topics']),
@@ -64,6 +65,7 @@ describe('Planner seam', () => {
       'summarize:summarize',
       'learningPath:prompt',
     ])
+    expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'en' })
     expect(result.plan.steps[2]?.input).toMatchObject({
       responseConstraint: expect.objectContaining({
         required: expect.arrayContaining([
@@ -76,10 +78,13 @@ describe('Planner seam', () => {
     })
   })
 
-  it('plans Summarize in Portuguese as detect → summarize → translate to pt (never summarize with pt I/O)', () => {
+  it('plans summarizePage with preferred=pt as detect → summarize → translate to pt', () => {
     const planner = createPlanner()
     const result = planner.plan({
-      goal: { instruction: 'Summarize this page in Portuguese.' },
+      goal: {
+        instruction: 'Summarize this page.',
+        context: { preferredLanguage: 'pt' },
+      },
       capabilities: ALL_AVAILABLE,
       tools: FULL_CATALOG,
     })
@@ -88,19 +93,65 @@ describe('Planner seam', () => {
     if (!result.ok) {
       return
     }
-    expect(result.plan.workflowId).toBe('summarizeInPortuguese')
+    expect(result.plan.workflowId).toBe('summarizePage')
     expect(result.plan.steps.map((step) => step.tool)).toEqual([
       'detectLanguage',
       'summarize',
       'translate',
     ])
     const summarizeInput = result.plan.steps[1]?.input as Record<string, unknown>
+    expect(summarizeInput).toMatchObject({ outputLanguage: 'en' })
     expect(summarizeInput).not.toMatchObject({ outputLanguage: 'pt' })
     expect(result.plan.steps[2]?.input).toEqual({
       text: { $from: 'summarize.summary' },
       sourceLanguage: { $from: 'summarize.foundationLanguage' },
       targetLanguage: 'pt',
     })
+  })
+
+  it('plans summarizePage with preferred=en without outbound translate', () => {
+    const planner = createPlanner()
+    const result = planner.plan({
+      goal: {
+        instruction: 'Summarize this page.',
+        context: { preferredLanguage: 'en' },
+      },
+      capabilities: ALL_AVAILABLE,
+      tools: FULL_CATALOG,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.plan.workflowId).toBe('summarizePage')
+    expect(result.plan.steps.map((step) => step.tool)).toEqual([
+      'detectLanguage',
+      'summarize',
+    ])
+    expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'en' })
+  })
+
+  it('plans summarizePage with preferred foundation ja using summarize outputLanguage', () => {
+    const planner = createPlanner()
+    const result = planner.plan({
+      goal: {
+        instruction: 'Summarize this page.',
+        context: { preferredLanguage: 'ja' },
+      },
+      capabilities: ALL_AVAILABLE,
+      tools: FULL_CATALOG,
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.plan.steps.map((step) => step.tool)).toEqual([
+      'detectLanguage',
+      'summarize',
+    ])
+    expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'ja' })
   })
 
   it('degrades Analyze Page when Prompt is unavailable but Summarizer is available', () => {
@@ -153,7 +204,7 @@ describe('Planner seam', () => {
     for (const instruction of [
       'Analyze this page.',
       'Turn this page into a learning path.',
-      'Summarize this page in Portuguese.',
+      'Summarize this page.',
     ]) {
       const result = planner.plan({
         goal: { instruction },

@@ -1,4 +1,10 @@
 import { resolveWorkflowId } from './demoGoals'
+import {
+  needsOutboundTranslation,
+  parsePreferredLanguage,
+  workingFoundationLanguage,
+  type PreferredLanguage,
+} from './preferredLanguage'
 import type {
   AgentStep,
   CapabilitySnapshotLike,
@@ -37,6 +43,10 @@ const LEARNING_PATH_CONSTRAINT = {
   additionalProperties: false,
 } as const
 
+function preferredFromGoal(goal: Goal): PreferredLanguage {
+  return parsePreferredLanguage(goal.context?.preferredLanguage)
+}
+
 function isUsable(readiness: string | undefined): boolean {
   return readiness === 'available' || readiness === 'downloadable' || readiness === 'downloading'
 }
@@ -67,7 +77,11 @@ function requireTools(
   return null
 }
 
-function buildAnalyzePagePlan(includePrompt: boolean): PlanResult {
+function buildAnalyzePagePlan(
+  includePrompt: boolean,
+  preferred: PreferredLanguage,
+): PlanResult {
+  const workingFoundation = workingFoundationLanguage(preferred)
   const steps: AgentStep[] = [
     {
       id: 'detect',
@@ -80,6 +94,7 @@ function buildAnalyzePagePlan(includePrompt: boolean): PlanResult {
       input: {
         text: { $from: 'context.mainText' },
         sourceLanguage: { $from: 'detect.language' },
+        outputLanguage: workingFoundation,
       },
       dependsOn: ['detect'],
     },
@@ -107,7 +122,8 @@ function buildAnalyzePagePlan(includePrompt: boolean): PlanResult {
   }
 }
 
-function buildLearningPathPlan(): PlanResult {
+function buildLearningPathPlan(preferred: PreferredLanguage): PlanResult {
+  const workingFoundation = workingFoundationLanguage(preferred)
   return {
     ok: true,
     plan: {
@@ -124,6 +140,7 @@ function buildLearningPathPlan(): PlanResult {
           input: {
             text: { $from: 'context.mainText' },
             sourceLanguage: { $from: 'detect.language' },
+            outputLanguage: workingFoundation,
           },
           dependsOn: ['detect'],
         },
@@ -142,37 +159,46 @@ function buildLearningPathPlan(): PlanResult {
   }
 }
 
-function buildSummarizeInPortuguesePlan(): PlanResult {
+function buildSummarizePagePlan(preferred: PreferredLanguage): PlanResult {
+  const workingFoundation = workingFoundationLanguage(preferred)
+  const outbound = needsOutboundTranslation(preferred)
+
+  const steps: AgentStep[] = [
+    {
+      id: 'detect',
+      tool: 'detectLanguage',
+      input: { text: { $from: 'context.mainText' } },
+    },
+    {
+      id: 'summarize',
+      tool: 'summarize',
+      input: {
+        text: { $from: 'context.mainText' },
+        sourceLanguage: { $from: 'detect.language' },
+        outputLanguage: workingFoundation,
+      },
+      dependsOn: ['detect'],
+    },
+  ]
+
+  if (outbound) {
+    steps.push({
+      id: 'translateResult',
+      tool: 'translate',
+      input: {
+        text: { $from: 'summarize.summary' },
+        sourceLanguage: { $from: 'summarize.foundationLanguage' },
+        targetLanguage: preferred,
+      },
+      dependsOn: ['summarize'],
+    })
+  }
+
   return {
     ok: true,
     plan: {
-      workflowId: 'summarizeInPortuguese',
-      steps: [
-        {
-          id: 'detect',
-          tool: 'detectLanguage',
-          input: { text: { $from: 'context.mainText' } },
-        },
-        {
-          id: 'summarize',
-          tool: 'summarize',
-          input: {
-            text: { $from: 'context.mainText' },
-            sourceLanguage: { $from: 'detect.language' },
-          },
-          dependsOn: ['detect'],
-        },
-        {
-          id: 'translatePt',
-          tool: 'translate',
-          input: {
-            text: { $from: 'summarize.summary' },
-            sourceLanguage: { $from: 'summarize.foundationLanguage' },
-            targetLanguage: 'pt',
-          },
-          dependsOn: ['summarize'],
-        },
-      ],
+      workflowId: 'summarizePage',
+      steps,
     },
   }
 }
@@ -181,13 +207,19 @@ function planWorkflow(
   workflowId: WorkflowId,
   capabilities: CapabilitySnapshotLike,
   tools: ToolCatalogEntry[],
+  preferred: PreferredLanguage,
 ): PlanResult {
   const baseMissing = [
     missingCapability(capabilities, 'languageDetector'),
     missingCapability(capabilities, 'summarizer'),
   ].filter((id): id is string => id !== null)
 
-  if (workflowId === 'summarizeInPortuguese') {
+  const needsTranslator =
+    (workflowId === 'summarizePage' && needsOutboundTranslation(preferred)) ||
+    ((workflowId === 'analyzePage' || workflowId === 'learningPath') &&
+      needsOutboundTranslation(preferred))
+
+  if (needsTranslator) {
     const translatorMissing = missingCapability(capabilities, 'translator')
     if (translatorMissing) {
       baseMissing.push(translatorMissing)
@@ -218,6 +250,12 @@ function planWorkflow(
     if (toolError) {
       return { ok: false, reason: toolError }
     }
+    if (needsOutboundTranslation(preferred)) {
+      const translateTools = requireTools(tools, ['translate'])
+      if (translateTools) {
+        return { ok: false, reason: translateTools }
+      }
+    }
     const includePrompt =
       isUsable(capabilities.prompt) && hasTool(tools, 'prompt')
     if (includePrompt) {
@@ -226,22 +264,30 @@ function planWorkflow(
         return { ok: false, reason: promptTools }
       }
     }
-    return buildAnalyzePagePlan(includePrompt)
+    return buildAnalyzePagePlan(includePrompt, preferred)
   }
 
   if (workflowId === 'learningPath') {
-    const toolError = requireTools(tools, ['detectLanguage', 'summarize', 'prompt'])
+    const required = ['detectLanguage', 'summarize', 'prompt']
+    if (needsOutboundTranslation(preferred)) {
+      required.push('translate')
+    }
+    const toolError = requireTools(tools, required)
     if (toolError) {
       return { ok: false, reason: toolError }
     }
-    return buildLearningPathPlan()
+    return buildLearningPathPlan(preferred)
   }
 
-  const toolError = requireTools(tools, ['detectLanguage', 'summarize', 'translate'])
+  const required = ['detectLanguage', 'summarize']
+  if (needsOutboundTranslation(preferred)) {
+    required.push('translate')
+  }
+  const toolError = requireTools(tools, required)
   if (toolError) {
     return { ok: false, reason: toolError }
   }
-  return buildSummarizeInPortuguesePlan()
+  return buildSummarizePagePlan(preferred)
 }
 
 export class Planner {
@@ -250,11 +296,13 @@ export class Planner {
     if (!workflowId) {
       return {
         ok: false,
-        reason: 'Unrecognized goal; map to a demo Workflow (Analyze Page, Learning Path, or Summarize in Portuguese)',
+        reason:
+          'Unrecognized goal; map to a demo Workflow (Analyze Page, Learning Path, or Summarize)',
       }
     }
 
-    return planWorkflow(workflowId, input.capabilities, input.tools)
+    const preferred = preferredFromGoal(input.goal)
+    return planWorkflow(workflowId, input.capabilities, input.tools, preferred)
   }
 }
 
