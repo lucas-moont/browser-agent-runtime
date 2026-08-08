@@ -94,7 +94,9 @@ describe('side panel shell', () => {
 
     expect(container.textContent).toContain('Language Detector')
     expect(container.textContent).toContain('Available')
-    expect(container.textContent).toContain('Unavailable — not supported on this device')
+    expect(container.textContent).toContain(
+      'Unavailable — enable Built-in AI or use a supported device',
+    )
   })
 
   it('runs a Goal and binds Trace + Result from AgentRuntime state', async () => {

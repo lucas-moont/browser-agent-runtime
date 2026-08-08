@@ -11,7 +11,7 @@ const STATUS_COPY: Record<CapabilityReadiness, string> = {
   available: 'Available',
   downloadable: 'Downloadable',
   downloading: 'Downloading',
-  unavailable: 'Unavailable — not supported on this device',
+  unavailable: 'Unavailable — enable Built-in AI or use a supported device',
 }
 
 const ORDER: CapabilityId[] = ['languageDetector', 'summarizer', 'translator', 'prompt']
