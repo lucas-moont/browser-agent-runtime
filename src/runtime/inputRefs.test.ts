@@ -25,4 +25,14 @@ describe('resolveStepInput', () => {
     )
     expect(resolved).toBe('User: ask\nSummary:\npage bits\nEnd')
   })
+
+  it('truncates $truncate refs for prompt-sized context', () => {
+    const long = 'x'.repeat(100)
+    const resolved = resolveStepInput(
+      { $truncate: { $from: 'extract.mainText' }, maxChars: 10 },
+      { extract: { mainText: long } },
+      null,
+    )
+    expect(resolved).toBe(`${'x'.repeat(10)}\n…[truncated]`)
+  })
 })

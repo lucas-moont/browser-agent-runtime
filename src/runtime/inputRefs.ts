@@ -65,6 +65,22 @@ export function resolveStepInput(
         .join('')
     }
 
+    if (record.$truncate !== undefined) {
+      const maxChars =
+        typeof record.maxChars === 'number' && record.maxChars > 0 ? record.maxChars : 8_000
+      const resolved = resolveStepInput(record.$truncate, outputs, context)
+      const text =
+        resolved === null || resolved === undefined
+          ? ''
+          : typeof resolved === 'string'
+            ? resolved
+            : String(resolved)
+      if (text.length <= maxChars) {
+        return text
+      }
+      return `${text.slice(0, maxChars)}\n…[truncated]`
+    }
+
     const result: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(record)) {
       result[key] = resolveStepInput(value, outputs, context)
