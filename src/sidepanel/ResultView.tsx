@@ -6,6 +6,7 @@ import type {
   SummarizePageResult,
   WorkflowId,
 } from '../runtime'
+import { MarkdownReply } from './MarkdownReply'
 
 function StringList({ items }: { items: string[] }) {
   if (items.length === 0) {
@@ -116,7 +117,7 @@ function SummarizePageResultView({ result }: { result: SummarizePageResult }) {
 function ConversationalResultView({ result }: { result: ConversationalResult }) {
   return (
     <div className="result-view__reply">
-      <p className="result-view__reply-text">{result.reply || '—'}</p>
+      <MarkdownReply markdown={result.reply || ''} />
     </div>
   )
 }

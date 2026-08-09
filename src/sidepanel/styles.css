@@ -102,6 +102,54 @@ body {
   min-width: 7.5rem;
 }
 
+.workspace-strip {
+  margin-top: 0.55rem;
+  padding: 0.45rem 0.55rem;
+  background: #eef3f8;
+  border-left: 3px solid var(--accent);
+  font-size: 0.75rem;
+}
+
+.workspace-strip__title {
+  font-weight: 650;
+  margin-bottom: 0.25rem;
+}
+
+.workspace-strip__tabs {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+}
+
+.workspace-strip__tabs li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-strip__empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+.workspace-strip__actions {
+  margin-top: 0.35rem;
+}
+
+.workspace-strip__actions button {
+  font: inherit;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.workspace-strip__error {
+  margin: 0.3rem 0 0;
+  color: var(--err);
+}
+
 .section-title {
   margin: 0 0 0.45rem;
   font-size: 0.6875rem;
@@ -556,10 +604,115 @@ body {
   font-weight: 600;
 }
 
-.result-view__reply-text {
+.result-view__reply-fallback {
   margin: 0;
-  white-space: pre-wrap;
   font-size: 0.9rem;
-  line-height: 1.45;
+  line-height: 1.5;
+}
+
+.markdown-reply {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: inherit;
+}
+
+.markdown-reply > :first-child {
+  margin-top: 0;
+}
+
+.markdown-reply > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-reply p {
+  margin: 0 0 0.65em;
+}
+
+.markdown-reply p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-reply strong {
+  font-weight: 650;
+}
+
+.markdown-reply em {
+  font-style: italic;
+}
+
+.markdown-reply ul,
+.markdown-reply ol {
+  margin: 0.35em 0 0.75em;
+  padding-left: 1.25em;
+}
+
+.markdown-reply li {
+  margin: 0.25em 0;
+}
+
+.markdown-reply li > p {
+  margin: 0.2em 0;
+}
+
+.markdown-reply li + li {
+  margin-top: 0.35em;
+}
+
+.markdown-reply h1,
+.markdown-reply h2,
+.markdown-reply h3,
+.markdown-reply h4 {
+  margin: 0.85em 0 0.4em;
+  font-size: 0.95rem;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.markdown-reply h1:first-child,
+.markdown-reply h2:first-child,
+.markdown-reply h3:first-child,
+.markdown-reply h4:first-child {
+  margin-top: 0;
+}
+
+.markdown-reply code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.markdown-reply pre {
+  margin: 0.5em 0 0.75em;
+  padding: 0.65em 0.75em;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+}
+
+.markdown-reply pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.8rem;
+}
+
+.markdown-reply a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.markdown-reply blockquote {
+  margin: 0.5em 0 0.75em;
+  padding-left: 0.75em;
+  border-left: 3px solid color-mix(in srgb, var(--line) 80%, transparent);
+  color: var(--muted);
+}
+
+.markdown-reply hr {
+  margin: 0.85em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
