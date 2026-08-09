@@ -29,7 +29,7 @@ Toolbar action on tab T
 - **Agent Workspace**: per-open group via `createSession` (ADR 0003 supersedes the reusable-group approach in [ADR 0002](docs/adr/0002-reusable-agent-workspace-group.md)).
 - Expand **Runtime Trace** on any assistant turn to see orchestration Events.
 
-Domain language: [`CONTEXT.md`](CONTEXT.md). Product direction: [`02-browser-agent-runtime-product.md`](02-browser-agent-runtime-product.md).
+Domain language: [`CONTEXT.md`](CONTEXT.md).
 
 ## Setup
 
