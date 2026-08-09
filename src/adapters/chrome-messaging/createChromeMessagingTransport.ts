@@ -4,6 +4,7 @@ import type {
   PageContextInspection,
   PageSnapshot,
 } from '../../messaging'
+import { wrapScriptInjectionError } from './injectErrors'
 import { extractPageSnapshotInPage, inspectPageContextInPage } from './pageDom'
 
 export type ChromeMessagingApi = {
@@ -31,32 +32,36 @@ export function createChromeMessagingTransport(
 ): MessagingTransport {
   return {
     async sendToContentScript(tabId, message) {
-      if (message.type === 'extractPage.request') {
-        const results = await chromeApi.scripting.executeScript({
-          target: { tabId },
-          func: extractPageSnapshotInPage,
-        })
-        const page = readInjectionResult(results) as PageSnapshot
-        const response: ContentToExtensionMessage = {
-          type: 'extractPage.response',
-          id: message.id,
-          page,
+      try {
+        if (message.type === 'extractPage.request') {
+          const results = await chromeApi.scripting.executeScript({
+            target: { tabId },
+            func: extractPageSnapshotInPage,
+          })
+          const page = readInjectionResult(results) as PageSnapshot
+          const response: ContentToExtensionMessage = {
+            type: 'extractPage.response',
+            id: message.id,
+            page,
+          }
+          return response
         }
-        return response
-      }
 
-      if (message.type === 'inspectPageContext.request') {
-        const results = await chromeApi.scripting.executeScript({
-          target: { tabId },
-          func: inspectPageContextInPage,
-        })
-        const context = readInjectionResult(results) as PageContextInspection
-        const response: ContentToExtensionMessage = {
-          type: 'inspectPageContext.response',
-          id: message.id,
-          context,
+        if (message.type === 'inspectPageContext.request') {
+          const results = await chromeApi.scripting.executeScript({
+            target: { tabId },
+            func: inspectPageContextInPage,
+          })
+          const context = readInjectionResult(results) as PageContextInspection
+          const response: ContentToExtensionMessage = {
+            type: 'inspectPageContext.response',
+            id: message.id,
+            context,
+          }
+          return response
         }
-        return response
+      } catch (cause) {
+        throw wrapScriptInjectionError(cause, tabId)
       }
 
       throw new Error(`Unsupported extension→content message type`)

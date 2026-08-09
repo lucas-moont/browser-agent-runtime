@@ -54,9 +54,9 @@ export function createInspectPageContextTool(
       try {
         raw = await deps.transport.sendToContentScript(tabId, encoded.value)
       } catch (cause) {
-        throw new ToolError('adapter_error', 'Failed to inspect page context via messaging', {
-          cause,
-        })
+        const detail =
+          cause instanceof Error ? cause.message : 'Failed to inspect page context via messaging'
+        throw new ToolError('adapter_error', detail, { cause })
       }
 
       const decoded = decodeInboundFromContentScript(raw)

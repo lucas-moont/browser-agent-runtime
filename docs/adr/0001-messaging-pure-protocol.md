@@ -33,7 +33,7 @@ This boundary is hard to reverse later: once tools, content scripts, and UI all 
    - `tabs.sendMessage` for extension → content script.
    - `runtime` messaging for content script → extension.
    - `scripting.executeScript` when programmatic injection is needed.
-   - `tabId` / `activeTab` lifecycle handling.
+   - `tabId` lifecycle and host permission requirements for side-panel injection (`activeTab` does **not** grant access from side-panel button clicks).
 
 3. Unit tests at the Messaging seam use a **fake transport**. Adapter/integration tests (optional, not required for every TDD cycle) cover live Chrome behavior.
 
@@ -48,7 +48,7 @@ This boundary is hard to reverse later: once tools, content scripts, and UI all 
 **Negative / cost**
 
 - An extra port/adapter layer versus “just call chrome in the tool.”
-- Adapter still needs careful integration when `activeTab` grants and async `onMessage` response channels matter.
+- Adapter still needs careful integration when host permissions and async `onMessage` response channels matter. Side-panel UX cannot rely on `activeTab` alone.
 
 **Follow-through**
 
