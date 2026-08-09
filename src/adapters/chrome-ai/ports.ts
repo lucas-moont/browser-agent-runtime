@@ -12,7 +12,7 @@ export type LanguageDetectorPort = {
 export type TranslatorPort = {
   translate(
     text: string,
-    options: { sourceLanguage: string; targetLanguage: string },
+    options: { sourceLanguage: string; targetLanguage: string; signal?: AbortSignal },
   ): Promise<string>
 }
 
@@ -27,6 +27,7 @@ export type SummarizeOptions = {
   outputLanguage?: FoundationLanguage
   expectedInputLanguages?: string[]
   context?: string
+  signal?: AbortSignal
 }
 
 export type SummarizerPort = {
@@ -36,6 +37,9 @@ export type SummarizerPort = {
 export type PromptOptions = {
   responseConstraint?: Record<string, unknown>
   omitResponseConstraintInput?: boolean
+  signal?: AbortSignal
+  /** Foundation language for Prompt expectedInputs/expectedOutputs (Chrome quality/safety). */
+  outputLanguage?: FoundationLanguage
 }
 
 export type PromptPort = {
@@ -45,6 +49,6 @@ export type PromptPort = {
 export type CapabilityReadinessPort = {
   getReadiness(
     id: 'languageDetector' | 'summarizer' | 'translator' | 'prompt',
-    options?: { sourceLanguage?: string; targetLanguage?: string },
+    options?: { sourceLanguage?: string; targetLanguage?: string; outputLanguage?: string },
   ): Promise<'unavailable' | 'downloadable' | 'downloading' | 'available'>
 }

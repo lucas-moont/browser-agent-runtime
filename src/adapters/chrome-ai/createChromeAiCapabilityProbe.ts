@@ -1,9 +1,9 @@
 import type {
   CapabilityId,
   CapabilityProbe,
-  CapabilityProbeOptions,
   CapabilityReadiness,
 } from '../../capabilities/CapabilityRegistry'
+import { DEFAULT_FOUNDATION_LANGUAGE } from '../../runtime/foundationLanguage'
 
 export type ChromeAiAvailabilityStatus =
   | 'unavailable'
@@ -12,7 +12,7 @@ export type ChromeAiAvailabilityStatus =
   | 'available'
 
 export type ChromeAiAvailabilityApi = {
-  availability(options?: CapabilityProbeOptions): Promise<ChromeAiAvailabilityStatus | string>
+  availability(options?: Record<string, unknown>): Promise<ChromeAiAvailabilityStatus | string>
 }
 
 export type ChromeAiGlobals = {
@@ -48,6 +48,21 @@ function resolveApi(globals: ChromeAiGlobals, id: CapabilityId): ChromeAiAvailab
   }
 }
 
+function summarizerLanguageOptions(outputLanguage: string): Record<string, unknown> {
+  return {
+    outputLanguage,
+    expectedInputLanguages: [outputLanguage],
+    expectedContextLanguages: [outputLanguage],
+  }
+}
+
+function promptLanguageOptions(outputLanguage: string): Record<string, unknown> {
+  return {
+    expectedInputs: [{ type: 'text', languages: [outputLanguage] }],
+    expectedOutputs: [{ type: 'text', languages: [outputLanguage] }],
+  }
+}
+
 export function createChromeAiCapabilityProbe(
   globals: ChromeAiGlobals = globalThis as ChromeAiGlobals,
 ): CapabilityProbe {
@@ -58,13 +73,21 @@ export function createChromeAiCapabilityProbe(
         return 'unavailable'
       }
 
-      const status =
-        id === 'translator'
-          ? await api.availability({
-              sourceLanguage: options?.sourceLanguage,
-              targetLanguage: options?.targetLanguage,
-            })
-          : await api.availability()
+      let status: ChromeAiAvailabilityStatus | string
+      if (id === 'translator') {
+        status = await api.availability({
+          sourceLanguage: options?.sourceLanguage,
+          targetLanguage: options?.targetLanguage,
+        })
+      } else if (id === 'summarizer') {
+        const outputLanguage = options?.outputLanguage ?? DEFAULT_FOUNDATION_LANGUAGE
+        status = await api.availability(summarizerLanguageOptions(outputLanguage))
+      } else if (id === 'prompt') {
+        const outputLanguage = options?.outputLanguage ?? DEFAULT_FOUNDATION_LANGUAGE
+        status = await api.availability(promptLanguageOptions(outputLanguage))
+      } else {
+        status = await api.availability()
+      }
 
       return normalizeReadiness(String(status))
     },

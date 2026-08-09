@@ -54,17 +54,19 @@ export function createSummarizeTool(deps: SummarizeToolDeps): AgentTool<Summariz
     dataBoundary: 'LOCAL',
     inputSchema: summarizeInputSchema,
     outputSchema: summarizeOutputSchema,
-    async execute(input) {
-      await assertCapabilityAvailable(deps.readiness, 'summarizer')
-
+    async execute(input, context) {
       const sourceLanguage = await resolveSourceLanguage(input.text, input.sourceLanguage, deps)
       const targetFoundation = input.outputLanguage ?? DEFAULT_FOUNDATION_LANGUAGE
+
+      await assertCapabilityAvailable(deps.readiness, 'summarizer', {
+        outputLanguage: targetFoundation,
+      })
 
       const normalized = await normalizeToFoundationLanguage(input.text, sourceLanguage, {
         targetFoundationLanguage: targetFoundation,
         translate: async (text, options) => {
           await assertCapabilityAvailable(deps.readiness, 'translator', options)
-          return deps.translator.translate(text, options)
+          return deps.translator.translate(text, { ...options, signal: context?.signal })
         },
       })
 
@@ -76,6 +78,7 @@ export function createSummarizeTool(deps: SummarizeToolDeps): AgentTool<Summariz
           format: input.format,
           outputLanguage: normalized.foundationLanguage,
           expectedInputLanguages: [normalized.foundationLanguage],
+          signal: context?.signal,
         })
       } catch (cause) {
         throw new ToolError('adapter_error', 'Summarization failed', {

@@ -22,7 +22,7 @@ export function createTranslateTool(deps: TranslateToolDeps): AgentTool<Translat
     dataBoundary: 'LOCAL',
     inputSchema: translateInputSchema,
     outputSchema: translateOutputSchema,
-    async execute(input) {
+    async execute(input, context) {
       await assertCapabilityAvailable(deps.readiness, 'translator', {
         sourceLanguage: input.sourceLanguage,
         targetLanguage: input.targetLanguage,
@@ -33,6 +33,7 @@ export function createTranslateTool(deps: TranslateToolDeps): AgentTool<Translat
         text = await deps.translator.translate(input.text, {
           sourceLanguage: input.sourceLanguage,
           targetLanguage: input.targetLanguage,
+          signal: context?.signal,
         })
       } catch (cause) {
         throw new ToolError('adapter_error', 'Translation failed', {

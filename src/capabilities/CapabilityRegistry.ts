@@ -16,6 +16,7 @@ export type CapabilityReadiness =
 export type CapabilityProbeOptions = {
   sourceLanguage?: string
   targetLanguage?: string
+  outputLanguage?: string
 }
 
 export type CapabilitySnapshot = Record<CapabilityId, CapabilityReadiness>
@@ -25,6 +26,7 @@ export type CapabilitySnapshotOptions = {
     sourceLanguage: string
     targetLanguage: string
   }
+  outputLanguage?: string
 }
 
 export type CapabilityProbe = {
@@ -63,11 +65,14 @@ export class CapabilityRegistry {
 
   async snapshot(options?: CapabilitySnapshotOptions): Promise<CapabilitySnapshot> {
     const translatorOptions = options?.translator
+    const outputLanguage =
+      options?.outputLanguage ?? translatorOptions?.sourceLanguage ?? 'en'
+    const foundationOptions = { outputLanguage }
     const [languageDetector, summarizer, translator, prompt] = await Promise.all([
       this.get('languageDetector'),
-      this.get('summarizer'),
+      this.get('summarizer', foundationOptions),
       this.get('translator', translatorOptions),
-      this.get('prompt'),
+      this.get('prompt', foundationOptions),
     ])
 
     return {

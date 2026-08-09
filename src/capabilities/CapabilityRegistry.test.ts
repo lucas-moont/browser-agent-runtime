@@ -6,12 +6,13 @@ import {
   UnknownCapabilityError,
   type CapabilityId,
   type CapabilityProbe,
+  type CapabilityProbeOptions,
   type CapabilityReadiness,
 } from './CapabilityRegistry'
 
 function fakeProbe(
   responses: Partial<Record<CapabilityId, CapabilityReadiness>>,
-  onProbe?: (id: CapabilityId, options?: { sourceLanguage?: string; targetLanguage?: string }) => void,
+  onProbe?: (id: CapabilityId, options?: CapabilityProbeOptions) => void,
 ): CapabilityProbe {
   return {
     async probe(id, options) {
@@ -134,26 +135,73 @@ describe('CapabilityRegistry', () => {
 
   it('maps Chrome AI availability() through the registry', async () => {
     const availability = vi.fn(async () => 'available' as const)
+    const summarizerAvailability = vi.fn(async (options?: Record<string, unknown>) => {
+      expect(options).toEqual({
+        outputLanguage: 'en',
+        expectedInputLanguages: ['en'],
+        expectedContextLanguages: ['en'],
+      })
+      return 'downloadable' as const
+    })
+    const promptAvailability = vi.fn(async (options?: Record<string, unknown>) => {
+      expect(options).toEqual({
+        expectedInputs: [{ type: 'text', languages: ['en'] }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      })
+      return 'available' as const
+    })
     const registry = new CapabilityRegistry(
       createChromeAiCapabilityProbe({
         LanguageDetector: { availability },
-        Summarizer: { availability: async () => 'downloadable' },
+        Summarizer: { availability: summarizerAvailability },
         Translator: {
           availability: async (options) => {
             expect(options).toEqual({ sourceLanguage: 'en', targetLanguage: 'pt' })
             return 'downloading'
           },
         },
-        LanguageModel: { availability: async () => 'available' },
+        LanguageModel: { availability: promptAvailability },
       }),
     )
 
     await expect(registry.get('languageDetector')).resolves.toBe('available')
-    await expect(registry.get('summarizer')).resolves.toBe('downloadable')
+    await expect(registry.get('summarizer', { outputLanguage: 'en' })).resolves.toBe('downloadable')
     await expect(registry.get('translator', { sourceLanguage: 'en', targetLanguage: 'pt' })).resolves.toBe(
       'downloading',
     )
-    await expect(registry.get('prompt')).resolves.toBe('available')
+    await expect(registry.get('prompt', { outputLanguage: 'en' })).resolves.toBe('available')
     expect(availability).toHaveBeenCalledOnce()
+    expect(summarizerAvailability).toHaveBeenCalledOnce()
+    expect(promptAvailability).toHaveBeenCalledOnce()
+  })
+
+  it('passes outputLanguage to summarizer and prompt probes in snapshot', async () => {
+    const seen: Array<{ id: CapabilityId; options?: CapabilityProbeOptions }> = []
+    const registry = new CapabilityRegistry(
+      fakeProbe(
+        {
+          languageDetector: 'available',
+          summarizer: 'available',
+          translator: 'available',
+          prompt: 'available',
+        },
+        (id, options) => {
+          seen.push({ id, options })
+        },
+      ),
+    )
+
+    await registry.snapshot({
+      outputLanguage: 'en',
+      translator: { sourceLanguage: 'en', targetLanguage: 'pt' },
+    })
+
+    expect(seen).toEqual(
+      expect.arrayContaining([
+        { id: 'summarizer', options: { outputLanguage: 'en' } },
+        { id: 'prompt', options: { outputLanguage: 'en' } },
+        { id: 'translator', options: { sourceLanguage: 'en', targetLanguage: 'pt' } },
+      ]),
+    )
   })
 })

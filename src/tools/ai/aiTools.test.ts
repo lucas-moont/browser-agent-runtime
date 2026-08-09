@@ -185,6 +185,88 @@ describe('Built-in AI tools', () => {
       foundationLanguage: 'en',
       translatedInbound: false,
     })
+    expect(prompt).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ outputLanguage: 'en' }),
+    )
+  })
+
+  it('prompt parses fenced JSON structured output', async () => {
+    const responseConstraint = {
+      type: 'object',
+      properties: { reply: { type: 'string' } },
+      required: ['reply'],
+    }
+    const registry = createToolRegistry()
+    registerBuiltinAiTools(
+      registry,
+      createAvailableDeps({
+        prompt: createFakePrompt(async () => '```json\n{"reply":"ok"}\n```'),
+      }),
+    )
+
+    await expect(
+      registry.execute('prompt', {
+        text: 'Say ok',
+        sourceLanguage: 'en',
+        responseConstraint,
+      }),
+    ).resolves.toMatchObject({
+      structured: { reply: 'ok' },
+    })
+  })
+
+  it('prompt wraps prose as reply when responseConstraint is reply-shaped', async () => {
+    const responseConstraint = {
+      type: 'object',
+      properties: { reply: { type: 'string' } },
+      required: ['reply'],
+    }
+    const registry = createToolRegistry()
+    registerBuiltinAiTools(
+      registry,
+      createAvailableDeps({
+        prompt: createFakePrompt(async () => 'Here is a helpful answer without JSON.'),
+      }),
+    )
+
+    await expect(
+      registry.execute('prompt', {
+        text: 'Help me',
+        sourceLanguage: 'en',
+        responseConstraint,
+      }),
+    ).resolves.toMatchObject({
+      structured: { reply: 'Here is a helpful answer without JSON.' },
+    })
+  })
+
+  it('prompt still fails when non-reply structured output is not JSON', async () => {
+    const responseConstraint = {
+      type: 'object',
+      properties: {
+        concepts: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['concepts'],
+    }
+    const registry = createToolRegistry()
+    registerBuiltinAiTools(
+      registry,
+      createAvailableDeps({
+        prompt: createFakePrompt(async () => 'not json'),
+      }),
+    )
+
+    await expect(
+      registry.execute('prompt', {
+        text: 'Extract concepts',
+        sourceLanguage: 'en',
+        responseConstraint,
+      }),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: 'Prompt structured output is not valid JSON',
+    })
   })
 
   it('prompt translates inbound pt before prompting', async () => {

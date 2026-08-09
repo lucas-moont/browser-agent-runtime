@@ -12,6 +12,7 @@ import {
 import type { AgentTool } from '../types'
 import { ToolError } from '../types'
 import { assertCapabilityAvailable } from './assertCapabilityAvailable'
+import { parseStructuredJson } from './parseStructuredJson'
 import {
   promptInputSchema,
   promptOutputSchema,
@@ -24,6 +25,32 @@ export type PromptToolDeps = {
   translator: TranslatorPort
   languageDetector: LanguageDetectorPort
   readiness: CapabilityReadinessPort
+}
+
+function isReplyShapedConstraint(constraint: Record<string, unknown>): boolean {
+  const required = constraint.required
+  if (Array.isArray(required) && required.includes('reply')) {
+    return true
+  }
+  const properties = constraint.properties
+  return (
+    typeof properties === 'object' &&
+    properties !== null &&
+    'reply' in properties
+  )
+}
+
+function isQueryShapedConstraint(constraint: Record<string, unknown>): boolean {
+  const required = constraint.required
+  if (Array.isArray(required) && required.includes('query')) {
+    return true
+  }
+  const properties = constraint.properties
+  return (
+    typeof properties === 'object' &&
+    properties !== null &&
+    'query' in properties
+  )
 }
 
 async function resolveSourceLanguage(
@@ -54,8 +81,10 @@ export function createPromptTool(deps: PromptToolDeps): AgentTool<PromptInput, P
     dataBoundary: 'LOCAL',
     inputSchema: promptInputSchema,
     outputSchema: promptOutputSchema,
-    async execute(input) {
-      await assertCapabilityAvailable(deps.readiness, 'prompt')
+    async execute(input, context) {
+      await assertCapabilityAvailable(deps.readiness, 'prompt', {
+        outputLanguage: DEFAULT_FOUNDATION_LANGUAGE,
+      })
 
       const sourceLanguage = await resolveSourceLanguage(input.text, input.sourceLanguage, deps)
 
@@ -63,7 +92,7 @@ export function createPromptTool(deps: PromptToolDeps): AgentTool<PromptInput, P
         targetFoundationLanguage: DEFAULT_FOUNDATION_LANGUAGE,
         translate: async (text, options) => {
           await assertCapabilityAvailable(deps.readiness, 'translator', options)
-          return deps.translator.translate(text, options)
+          return deps.translator.translate(text, { ...options, signal: context?.signal })
         },
       })
 
@@ -72,6 +101,8 @@ export function createPromptTool(deps: PromptToolDeps): AgentTool<PromptInput, P
         text = await deps.prompt.prompt(normalized.text, {
           responseConstraint: input.responseConstraint,
           omitResponseConstraintInput: input.omitResponseConstraintInput,
+          signal: context?.signal,
+          outputLanguage: normalized.foundationLanguage,
         })
       } catch (cause) {
         throw new ToolError('adapter_error', 'Prompt failed', {
@@ -83,12 +114,24 @@ export function createPromptTool(deps: PromptToolDeps): AgentTool<PromptInput, P
       let structured: unknown | undefined
       if (input.responseConstraint !== undefined) {
         try {
-          structured = JSON.parse(text) as unknown
+          structured = parseStructuredJson(text)
         } catch (cause) {
-          throw new ToolError('validation', 'Prompt structured output is not valid JSON', {
-            capabilityId: 'prompt',
-            cause,
-          })
+          if (isReplyShapedConstraint(input.responseConstraint) && text.trim()) {
+            structured = { reply: text.trim() }
+          } else if (isQueryShapedConstraint(input.responseConstraint)) {
+            const candidate = text.trim().replace(/^["']|["']$/g, '')
+            structured = {
+              query:
+                candidate && !candidate.includes('\n') && candidate.length <= 120
+                  ? candidate
+                  : '',
+            }
+          } else {
+            throw new ToolError('validation', 'Prompt structured output is not valid JSON', {
+              capabilityId: 'prompt',
+              cause,
+            })
+          }
         }
       }
 
