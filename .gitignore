@@ -8,6 +8,8 @@ build/
 !.env.example
 *.local
 LINKEDIN_POST.md
+01-browser-agent-runtime-weekend.md
+02-browser-agent-runtime-product.md
 .DS_Store
 Thumbs.db
 *.log
