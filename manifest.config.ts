@@ -3,7 +3,7 @@ import { defineManifest } from '@crxjs/vite-plugin'
 export default defineManifest({
   manifest_version: 3,
   name: 'Browser Agent Runtime',
-  version: '0.1.0',
+  version: '1.0.0',
   description:
     'Local-first browser agent runtime using Chrome Built-in AI and page tools.',
   action: {
