@@ -1,5 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { resolveActiveTabId } from '../adapters/chrome-messaging'
+import {
+  createChromeAgentWorkspace,
+  type AgentWorkspacePort,
+  type WorkspaceTabInfo,
+} from '../adapters/chrome-workspace'
 import type { CapabilitySnapshot } from '../capabilities/CapabilityRegistry'
 import {
   DEMO_GOALS,
@@ -10,6 +15,7 @@ import {
   type AgentRuntime,
   type AgentState,
   type ConversationTurn,
+  type LanguagePreferenceMode,
   type PreferredLanguage,
   type WorkflowId,
 } from '../runtime'
@@ -19,9 +25,19 @@ import {
   createSidePanelCapabilityRegistry,
   createSidePanelRuntime,
 } from './createSidePanelRuntime'
+import { detectMessagePreferredLanguage } from './detectMessageLanguage'
 import { ResultView } from './ResultView'
 
 export const APP_TITLE = 'Browser Agent Runtime'
+
+const THREAD_NEAR_BOTTOM_PX = 80
+
+export function isThreadNearBottom(
+  el: Pick<HTMLElement, 'scrollTop' | 'scrollHeight' | 'clientHeight'>,
+  thresholdPx = THREAD_NEAR_BOTTOM_PX,
+): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= thresholdPx
+}
 
 export const DEFAULT_CAPABILITY_SNAPSHOT: CapabilitySnapshot = {
   languageDetector: 'unavailable',
@@ -70,6 +86,8 @@ export type AppProps = {
   createRuntime?: () => AgentRuntime
   resolveTabId?: () => Promise<number | undefined>
   loadCapabilities?: (preferredLanguage?: PreferredLanguage) => Promise<CapabilitySnapshot>
+  detectMessageLanguage?: (text: string, fallback: PreferredLanguage) => Promise<PreferredLanguage>
+  workspace?: AgentWorkspacePort
 }
 
 function nextMessageId(prefix: string): string {
@@ -81,7 +99,7 @@ function unsupportedCapability(error: string | undefined): boolean {
 }
 
 export function App({
-  createRuntime = createSidePanelRuntime,
+  createRuntime,
   resolveTabId = async () => {
     try {
       return await resolveActiveTabId()
@@ -99,19 +117,69 @@ export function App({
       },
     })
   },
+  detectMessageLanguage = async (text, fallback) => {
+    try {
+      return await detectMessagePreferredLanguage(text, { fallback })
+    } catch {
+      return fallback
+    }
+  },
+  workspace = createChromeAgentWorkspace(),
 }: AppProps = {}) {
+  const makeRuntime =
+    createRuntime ?? (() => createSidePanelRuntime(createSidePanelCapabilityRegistry(), workspace))
   const languageSelectId = useId()
   const threadRef = useRef<HTMLDivElement | null>(null)
+  const stickThreadToBottomRef = useRef(true)
   const runtimeRef = useRef<AgentRuntime | null>(null)
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>(DEFAULT_CAPABILITY_SNAPSHOT)
-  const [preferredLanguage, setPreferredLanguage] = useState<PreferredLanguage>('en')
+  const [languageMode, setLanguageMode] = useState<LanguagePreferenceMode>('auto')
+  const [lastDetectedLanguage, setLastDetectedLanguage] = useState<PreferredLanguage>('en')
   const [draft, setDraft] = useState('')
   const [messages, setMessages] = useState<ConversationMessage[]>([])
   const [running, setRunning] = useState(false)
+  const [groupId, setGroupId] = useState<number | undefined>()
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTabInfo[]>([])
+  const [workspaceError, setWorkspaceError] = useState<string | undefined>()
+
+  const effectivePreferred =
+    languageMode === 'auto' ? lastDetectedLanguage : languageMode
+
+  async function refreshWorkspace(nextGroupId?: number) {
+    try {
+      const id = nextGroupId ?? (await workspace.ensureWorkspace())
+      setGroupId(id)
+      const tabs = await workspace.listTabs(id)
+      setWorkspaceTabs(tabs)
+      setWorkspaceError(undefined)
+      return id
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : 'Workspace unavailable')
+      return undefined
+    }
+  }
+
+  async function inviteCurrentTab() {
+    const tabId = await resolveTabId()
+    if (typeof tabId !== 'number') {
+      setWorkspaceError('No active tab to invite')
+      return
+    }
+    const id = (await refreshWorkspace()) ?? groupId
+    if (typeof id !== 'number') {
+      return
+    }
+    try {
+      await workspace.inviteTab(id, tabId)
+      await refreshWorkspace(id)
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : 'Invite failed')
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
-    void loadCapabilities(preferredLanguage).then((next) => {
+    void loadCapabilities(effectivePreferred).then((next) => {
       if (!cancelled) {
         setSnapshot(next)
       }
@@ -119,15 +187,63 @@ export function App({
     return () => {
       cancelled = true
     }
-  }, [loadCapabilities, preferredLanguage])
+  }, [loadCapabilities, effectivePreferred])
+
+  useEffect(() => {
+    let cancelled = false
+    void refreshWorkspace().then(() => {
+      if (cancelled) {
+        return
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount ensure once
+  }, [])
 
   useEffect(() => {
     const el = threadRef.current
-    if (!el) {
+    if (!el || !stickThreadToBottomRef.current) {
       return
     }
     el.scrollTop = el.scrollHeight
   }, [messages, running])
+
+  function handleThreadScroll() {
+    const el = threadRef.current
+    if (!el) {
+      return
+    }
+    stickThreadToBottomRef.current = isThreadNearBottom(el)
+  }
+  async function resolvePreferredForMessage(instruction: string): Promise<PreferredLanguage> {
+    if (languageMode !== 'auto') {
+      return languageMode
+    }
+    const detected = await detectMessageLanguage(instruction, lastDetectedLanguage)
+    setLastDetectedLanguage(detected)
+    return detected
+  }
+
+  async function prepareWorkspaceForRun(tabId: number | undefined): Promise<number | undefined> {
+    const id = await refreshWorkspace(groupId)
+    if (typeof id !== 'number') {
+      return undefined
+    }
+    if (typeof tabId === 'number') {
+      const members = await workspace.listTabs(id)
+      if (!members.some((tab) => tab.tabId === tabId)) {
+        try {
+          await workspace.inviteTab(id, tabId)
+          await refreshWorkspace(id)
+        } catch {
+          // invite may fail on restricted URLs; still run with existing members
+        }
+      }
+    }
+    return id
+  }
 
   async function sendGoal(instruction: string) {
     const trimmed = instruction.trim()
@@ -135,7 +251,7 @@ export function App({
       return
     }
 
-    const preferred = parsePreferredLanguage(preferredLanguage)
+    const preferred = await resolvePreferredForMessage(trimmed)
     const history: ConversationTurn[] = []
     for (const message of messages) {
       if (message.role === 'user') {
@@ -169,9 +285,10 @@ export function App({
 
     setDraft('')
     setRunning(true)
+    stickThreadToBottomRef.current = true
     setMessages((prev) => [...prev, userMessage, placeholder])
 
-    const runtime = createRuntime()
+    const runtime = makeRuntime()
     runtimeRef.current = runtime
 
     const poll = window.setInterval(() => {
@@ -194,6 +311,7 @@ export function App({
 
     try {
       const tabId = await resolveTabId()
+      const preparedGroupId = await prepareWorkspaceForRun(tabId)
       const next = await runtime.run({
         goal: {
           instruction: trimmed,
@@ -203,6 +321,7 @@ export function App({
           },
         },
         tabId,
+        groupId: preparedGroupId,
       })
       setMessages((prev) =>
         prev.map((message) =>
@@ -288,12 +407,21 @@ export function App({
             <select
               id={languageSelectId}
               aria-label="Preferred response language"
-              value={preferredLanguage}
+              value={languageMode}
               disabled={running}
               onChange={(event) => {
-                setPreferredLanguage(parsePreferredLanguage(event.target.value))
+                const value = event.target.value
+                if (value === 'auto') {
+                  setLanguageMode('auto')
+                  return
+                }
+                setLanguageMode(parsePreferredLanguage(value))
               }}
             >
+              <option value="auto">
+                Auto
+                {languageMode === 'auto' ? ` (${LANGUAGE_LABELS[lastDetectedLanguage]})` : ''}
+              </option>
               {PREFERRED_LANGUAGES.map((code) => (
                 <option key={code} value={code}>
                   {LANGUAGE_LABELS[code]}
@@ -303,9 +431,37 @@ export function App({
           </label>
         </div>
         <CapabilityStrip snapshot={snapshot} compact />
+        <div className="workspace-strip" aria-label="Agent workspace">
+          <div className="workspace-strip__title">
+            Workspace · Browser Agent · {workspaceTabs.length} tab
+            {workspaceTabs.length === 1 ? '' : 's'}
+          </div>
+          {workspaceTabs.length === 0 ? (
+            <p className="workspace-strip__empty">No tabs in workspace — Add current tab</p>
+          ) : (
+            <ol className="workspace-strip__tabs">
+              {workspaceTabs.map((tab) => (
+                <li key={tab.tabId} title={tab.url}>
+                  {tab.title || tab.url || `Tab ${tab.tabId}`}
+                </li>
+              ))}
+            </ol>
+          )}
+          <div className="workspace-strip__actions">
+            <button type="button" disabled={running} onClick={() => void inviteCurrentTab()}>
+              Add current tab
+            </button>
+          </div>
+          {workspaceError ? <p className="workspace-strip__error">{workspaceError}</p> : null}
+        </div>
       </header>
 
-      <div className="chat-thread" ref={threadRef} aria-label="Conversation">
+      <div
+        className="chat-thread"
+        ref={threadRef}
+        aria-label="Conversation"
+        onScroll={handleThreadScroll}
+      >
         {messages.length === 0 ? (
           <p className="chat-thread__empty">
             Ask anything about this page. Suggestions below are shortcuts — you can type freely.
