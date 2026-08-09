@@ -26,12 +26,13 @@ export type AgentRuntimeDeps = {
   executor?: WorkflowExecutor
   policy?: Policy
   now?: () => number
-  collectPageContext?: (toolContext?: { tabId?: number }) => Promise<unknown>
+  collectPageContext?: (toolContext?: { tabId?: number; groupId?: number }) => Promise<unknown>
 }
 
 export type AgentRunOptions = {
   goal: Goal
   tabId?: number
+  groupId?: number
 }
 
 const LOCALIZE_SKIP_KEYS = new Set([
@@ -129,12 +130,16 @@ function buildConversationalResult(
   const detect = asRecord(outputs.detect)
   const replyOut = asRecord(outputs.reply)
   const structured = asRecord(replyOut.structured)
-  const reply =
-    typeof structured.reply === 'string'
-      ? structured.reply
-      : typeof replyOut.text === 'string'
-        ? replyOut.text
-        : ''
+  let reply: unknown
+  if (typeof structured.reply === 'string') {
+    reply = structured.reply
+  } else if ('reply' in structured) {
+    reply = structured.reply
+  } else if (typeof replyOut.text === 'string') {
+    reply = replyOut.text
+  } else {
+    reply = ''
+  }
   return {
     reply,
     language: detect.language ?? 'unknown',
@@ -222,7 +227,10 @@ export class AgentRuntime {
   private readonly executor: WorkflowExecutor
   private readonly policy: Policy
   private readonly now: () => number
-  private readonly collectPageContext: (toolContext?: { tabId?: number }) => Promise<unknown>
+  private readonly collectPageContext: (toolContext?: {
+    tabId?: number
+    groupId?: number
+  }) => Promise<unknown>
   private state: AgentState = emptyState()
   private running = false
 
@@ -235,7 +243,16 @@ export class AgentRuntime {
     this.now = deps.now ?? (() => Date.now())
     this.collectPageContext =
       deps.collectPageContext ??
-      (async (toolContext) => this.tools.execute('extractPage', {}, toolContext))
+      (async (toolContext) => {
+        if (toolContext?.groupId !== undefined && this.tools.get('extractWorkspacePages')) {
+          try {
+            return await this.tools.execute('extractWorkspacePages', {}, toolContext)
+          } catch {
+            // fall through to single-tab extract
+          }
+        }
+        return this.tools.execute('extractPage', {}, toolContext)
+      })
   }
 
   getState(): AgentState {
@@ -283,7 +300,10 @@ export class AgentRuntime {
 
     const preferred = preferredFromGoal(options.goal)
     const workingFoundation = workingFoundationLanguage(preferred)
-    const toolContext = options.tabId !== undefined ? { tabId: options.tabId } : undefined
+    const toolContext =
+      options.tabId !== undefined || options.groupId !== undefined
+        ? { tabId: options.tabId, groupId: options.groupId }
+        : undefined
 
     let pageContext: unknown
     try {
@@ -358,7 +378,9 @@ export class AgentRuntime {
     let rawResult = buildResult(plan.workflowId, execution.outputs, preferred)
 
     if (
-      (plan.workflowId === 'analyzePage' || plan.workflowId === 'learningPath') &&
+      (plan.workflowId === 'analyzePage' ||
+        plan.workflowId === 'learningPath' ||
+        plan.workflowId === 'conversational') &&
       needsOutboundTranslation(preferred)
     ) {
       try {

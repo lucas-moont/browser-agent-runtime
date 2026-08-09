@@ -30,6 +30,7 @@ function fakeCapabilities(
 function registerFakeTools(
   language = 'en',
   options?: {
+    reply?: string
     concepts?: { concepts: string[]; topics: string[] }
     learningPath?: {
       prerequisites: string[]
@@ -37,7 +38,8 @@ function registerFakeTools(
       sequence: string[]
       nextTopics: string[]
     }
-    invalidConcepts?: boolean
+    /** When true, Prompt returns a non-string `reply` and empty text so Result validation fails. */
+    invalidReply?: boolean
   },
 ) {
   const registry = createToolRegistry()
@@ -176,6 +178,27 @@ function registerFakeTools(
     }) {
       const constraint = input.responseConstraint as { required?: string[] } | undefined
       const required = constraint?.required ?? []
+      if (options?.invalidReply || required.includes('reply')) {
+        if (options?.invalidReply) {
+          return {
+            text: '',
+            structured: { reply: 123 },
+            sourceLanguage: input.sourceLanguage ?? language,
+            foundationLanguage: 'en' as const,
+            translatedInbound: false,
+          }
+        }
+        const reply =
+          options?.reply ??
+          'Conversational reply about the page.'
+        return {
+          text: JSON.stringify({ reply }),
+          structured: { reply },
+          sourceLanguage: input.sourceLanguage ?? language,
+          foundationLanguage: 'en' as const,
+          translatedInbound: language === 'pt',
+        }
+      }
       if (required.includes('sequence')) {
         const structured = options?.learningPath ?? {
           prerequisites: ['HTML'],
@@ -189,15 +212,6 @@ function registerFakeTools(
           sourceLanguage: input.sourceLanguage ?? language,
           foundationLanguage: 'en' as const,
           translatedInbound: language === 'pt',
-        }
-      }
-      if (options?.invalidConcepts) {
-        return {
-          text: '{"concepts":"bad","topics":[]}',
-          structured: { concepts: 'bad', topics: [] },
-          sourceLanguage: input.sourceLanguage ?? language,
-          foundationLanguage: 'en' as const,
-          translatedInbound: false,
         }
       }
       const structured = options?.concepts ?? {
@@ -221,7 +235,7 @@ function registerFakeTools(
 }
 
 describe('AgentRuntime seam', () => {
-  it('emits goal_received → context_collected → plan_created → tool events → agent_completed for Analyze Page', async () => {
+  it('emits goal_received → context_collected → plan_created → tool events → agent_completed for page suggestion text', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
       tools: registerFakeTools('en'),
@@ -237,6 +251,7 @@ describe('AgentRuntime seam', () => {
     })
 
     expect(state.status).toBe('completed')
+    expect(state.workflowId).toBe('conversational')
     expect(state.events.map((event) => event.type)).toEqual([
       'goal_received',
       'context_collected',
@@ -250,18 +265,18 @@ describe('AgentRuntime seam', () => {
       'agent_completed',
     ])
     expect(state.result).toEqual({
+      reply: 'Conversational reply about the page.',
       language: 'en',
-      summary: 'SUMMARY(en):Hello from the page',
-      topics: ['Runtime', 'Planning'],
-      concepts: ['Agent', 'Tool'],
       preferredLanguage: 'en',
     })
   })
 
-  it('completes Learning Path with structured Result', async () => {
+  it('completes Learning Path suggestion text as conversational reply', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
-      tools: registerFakeTools('en'),
+      tools: registerFakeTools('en', {
+        reply: 'A learning path based on this page.',
+      }),
     })
 
     const state = await runtime.run({
@@ -270,20 +285,20 @@ describe('AgentRuntime seam', () => {
     })
 
     expect(state.status).toBe('completed')
-    expect(state.workflowId).toBe('learningPath')
+    expect(state.workflowId).toBe('conversational')
     expect(state.result).toEqual({
-      prerequisites: ['HTML'],
-      concepts: ['DOM'],
-      sequence: ['Read page', 'Practice'],
-      nextTopics: ['Events'],
+      reply: 'A learning path based on this page.',
+      language: 'en',
       preferredLanguage: 'en',
     })
   })
 
-  it('runs summarizePage with preferred=pt via foundation summarize then translate', async () => {
+  it('runs Summarize suggestion with preferred=pt via conversational plan then outbound localize', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
-      tools: registerFakeTools('pt'),
+      tools: registerFakeTools('pt', {
+        reply: 'SUMMARY reply',
+      }),
     })
 
     const state = await runtime.run({
@@ -295,24 +310,20 @@ describe('AgentRuntime seam', () => {
     })
 
     expect(state.status).toBe('completed')
-    expect(state.workflowId).toBe('summarizePage')
+    expect(state.workflowId).toBe('conversational')
     expect(state.result).toEqual({
+      reply: '[en->pt]SUMMARY reply',
       language: 'pt',
-      summary: '[en->pt]SUMMARY(pt):Olá mundo da página',
-      foundationLanguage: 'en',
-      translatedInbound: true,
       preferredLanguage: 'pt',
     })
-    const translateEvent = state.events.find(
-      (event) => event.type === 'tool_completed' && event.tool === 'translate',
-    )
-    expect(translateEvent).toBeTruthy()
   })
 
-  it('runs summarizePage with preferred=en without outbound translate', async () => {
+  it('runs Summarize suggestion with preferred=en without outbound translate', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
-      tools: registerFakeTools('en'),
+      tools: registerFakeTools('en', {
+        reply: 'SUMMARY(en):Hello from the page',
+      }),
     })
 
     const state = await runtime.run({
@@ -324,11 +335,10 @@ describe('AgentRuntime seam', () => {
     })
 
     expect(state.status).toBe('completed')
+    expect(state.workflowId).toBe('conversational')
     expect(state.result).toEqual({
+      reply: 'SUMMARY(en):Hello from the page',
       language: 'en',
-      summary: 'SUMMARY(en):Hello from the page',
-      foundationLanguage: 'en',
-      translatedInbound: false,
       preferredLanguage: 'en',
     })
     expect(
@@ -338,10 +348,12 @@ describe('AgentRuntime seam', () => {
     ).toBe(false)
   })
 
-  it('localizes analyzePage Result strings when preferred needs outbound translation', async () => {
+  it('localizes conversational reply when preferred needs outbound translation', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
-      tools: registerFakeTools('en'),
+      tools: registerFakeTools('en', {
+        reply: 'Hello from the page',
+      }),
     })
 
     const state = await runtime.run({
@@ -353,11 +365,10 @@ describe('AgentRuntime seam', () => {
     })
 
     expect(state.status).toBe('completed')
+    expect(state.workflowId).toBe('conversational')
     expect(state.result).toEqual({
+      reply: '[en->pt]Hello from the page',
       language: 'en',
-      summary: '[en->pt]SUMMARY(en):Hello from the page',
-      topics: ['[en->pt]Runtime', '[en->pt]Planning'],
-      concepts: ['[en->pt]Agent', '[en->pt]Tool'],
       preferredLanguage: 'pt',
     })
   })
@@ -384,7 +395,7 @@ describe('AgentRuntime seam', () => {
   it('fails observably when structured Result fails Zod validation', async () => {
     const runtime = createAgentRuntime({
       capabilities: fakeCapabilities(),
-      tools: registerFakeTools('en', { invalidConcepts: true }),
+      tools: registerFakeTools('en', { invalidReply: true }),
     })
 
     const state = await runtime.run({
