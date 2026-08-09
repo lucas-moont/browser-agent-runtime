@@ -1,11 +1,12 @@
 import type { ConversationTurn, WorkflowId } from './types'
 
 export type DemoGoal = {
-  id: Exclude<WorkflowId, 'conversational'>
+  id: string
   label: string
   instruction: string
 }
 
+/** Side-panel suggestion chips — plain message text, not workflow modes. */
 export const DEMO_GOALS: readonly DemoGoal[] = [
   {
     id: 'analyzePage',
@@ -33,49 +34,15 @@ export function formatConversationHistory(history: ConversationTurn[] | undefine
     .join('\n')
 }
 
-export function matchDemoWorkflow(instruction: string): Exclude<WorkflowId, 'conversational'> | null {
-  const normalized = instruction.trim().toLowerCase()
-  if (!normalized) {
-    return null
-  }
-
-  if (
-    normalized.includes('learning path') ||
-    normalized.includes('study path') ||
-    normalized.includes('prerequisites')
-  ) {
-    return 'learningPath'
-  }
-
-  if (
-    normalized.includes('analyze') ||
-    normalized.includes('analyse') ||
-    normalized.includes('key concepts')
-  ) {
-    return 'analyzePage'
-  }
-
-  if (
-    normalized === 'summarize this page.' ||
-    normalized === 'summarize this page' ||
-    (normalized.includes('summarize') &&
-      !normalized.includes('learning') &&
-      normalized.includes('page') &&
-      normalized.split(/\s+/).length <= 6)
-  ) {
-    return 'summarizePage'
-  }
-
+/**
+ * @deprecated Template matching removed — suggestions are ordinary messages.
+ * Kept as a no-op helper so older tests/docs imports stay stable.
+ */
+export function matchDemoWorkflow(_instruction: string): null {
   return null
 }
 
-/** Maps known demo phrasing to templates; everything else is free-form conversation. */
-export function resolveWorkflowId(instruction: string): WorkflowId {
-  const exact = DEMO_GOALS.find(
-    (goal) => goal.instruction.trim().toLowerCase() === instruction.trim().toLowerCase(),
-  )
-  if (exact) {
-    return exact.id
-  }
-  return matchDemoWorkflow(instruction) ?? 'conversational'
+/** Every Goal is free-form conversation; chips only supply the instruction text. */
+export function resolveWorkflowId(_instruction: string): WorkflowId {
+  return 'conversational'
 }
