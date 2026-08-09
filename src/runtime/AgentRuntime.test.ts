@@ -478,4 +478,60 @@ describe('AgentRuntime seam', () => {
     release()
     await first
   })
+
+  it('fails research runs when SERP mainText is empty', async () => {
+    const registry = createToolRegistry()
+    const base = registerFakeTools('en')
+    for (const tool of base.list()) {
+      registry.register(tool)
+    }
+    registry.register({
+      name: 'searchWeb',
+      description: 'search',
+      capabilities: [],
+      dataBoundary: 'BROWSER',
+      inputSchema: z.object({
+        query: z.string().optional(),
+        fallbackQuery: z.string().optional(),
+      }),
+      outputSchema: z.object({
+        query: z.string(),
+        url: z.string(),
+        mainText: z.string(),
+        results: z.array(
+          z.object({
+            title: z.string(),
+            url: z.string(),
+            snippet: z.string(),
+          }),
+        ),
+        mode: z.enum(['fetch', 'tab']),
+        tabId: z.number().optional(),
+      }),
+      async execute(input: { query?: string; fallbackQuery?: string }) {
+        return {
+          query: input.query?.trim() || input.fallbackQuery || 'x',
+          url: 'https://html.duckduckgo.com/html/?q=x',
+          mainText: '',
+          results: [],
+          mode: 'fetch' as const,
+        }
+      },
+    })
+
+    const runtime = createAgentRuntime({
+      capabilities: fakeCapabilities(),
+      tools: registry,
+    })
+
+    const state = await runtime.run({
+      goal: { instruction: 'Search the web for agent runtimes' },
+      tabId: 1,
+      groupId: 1,
+    })
+
+    expect(state.status).toBe('failed')
+    expect(state.error).toMatch(/empty or blocked/i)
+    expect(state.events.some((event) => event.type === 'agent_failed')).toBe(true)
+  })
 })

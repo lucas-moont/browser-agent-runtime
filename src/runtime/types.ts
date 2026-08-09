@@ -53,6 +53,7 @@ export type AgentEventType =
   | 'tool_completed'
   | 'agent_completed'
   | 'agent_failed'
+  | 'agent_cancelled'
 
 export type AgentEvent = {
   type: AgentEventType
@@ -63,7 +64,7 @@ export type AgentEvent = {
   workflowId?: WorkflowId
 }
 
-export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed'
+export type AgentStatus = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export type AgentState = {
   status: AgentStatus

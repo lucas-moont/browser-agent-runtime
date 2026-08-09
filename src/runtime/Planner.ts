@@ -1,3 +1,8 @@
+import {
+  compactSearchQuery,
+  stripInstructionalSearchProse,
+  topicExtrasFromInstruction,
+} from './webResearchQueryQuality'
 import { formatConversationHistory, resolveWorkflowId } from './demoGoals'
 import {
   needsOutboundTranslation,
@@ -51,6 +56,27 @@ const REPLY_CONSTRAINT = {
   required: ['reply'],
   additionalProperties: false,
 } as const
+
+const QUERY_CONSTRAINT = {
+  type: 'object',
+  properties: {
+    query: { type: 'string' },
+  },
+  required: ['query'],
+  additionalProperties: false,
+} as const
+
+export const WEB_RESEARCH_QUERY_REWRITE_INSTRUCTIONS = `You write web search queries for DuckDuckGo/Google.
+
+Return JSON with a single string field "query".
+
+Rules for "query":
+- Concise keyword / noun-phrase query only (about 3–12 words).
+- Prefer the page title entities and topic terms.
+- Do NOT copy the user's full request.
+- Do NOT include instructional prose such as "search the web", "similar articles like this one", "improve my knowledge", "the goal is", "please", or "can you".
+- No trailing punctuation.
+- English keywords are fine even if the user wrote in another language.`
 
 /** System instructions for free-form Prompt replies (kept explicit for Planner tests). */
 export const CONVERSATIONAL_REPLY_INSTRUCTIONS = `You are Browser Agent Runtime — an on-device assistant (Chrome Built-in AI Prompt API / Gemini Nano) in a side panel.
@@ -132,17 +158,29 @@ function pageTitleFromContext(pageContext: unknown): string {
 }
 
 export function buildWebResearchQuery(instruction: string, pageContext: unknown): string {
-  const fromInstruction = extractWebSearchQuery(instruction)
   const title = pageTitleFromContext(pageContext)
-  if (
-    title &&
+  const cleaned = stripInstructionalSearchProse(extractWebSearchQuery(instruction))
+  const pageLike =
+    Boolean(title) &&
     (/\blike this\b/i.test(instruction) ||
       looksLikeDeepResearchRequest(instruction) ||
-      /\bmore articles\b/i.test(instruction))
-  ) {
-    return `${title} ${fromInstruction}`.trim().slice(0, 240)
+      /\bmore articles\b/i.test(instruction) ||
+      /\bsimilar articles\b/i.test(instruction))
+
+  if (pageLike && title) {
+    const extras = topicExtrasFromInstruction(instruction, title)
+    return compactSearchQuery([title, extras, 'related articles'])
   }
-  return fromInstruction.slice(0, 240)
+
+  if (cleaned) {
+    return compactSearchQuery([cleaned])
+  }
+
+  if (title) {
+    return compactSearchQuery([title, 'related articles'])
+  }
+
+  return compactSearchQuery([extractWebSearchQuery(instruction)])
 }
 
 function preferredFromGoal(goal: Goal): PreferredLanguage {
@@ -150,7 +188,7 @@ function preferredFromGoal(goal: Goal): PreferredLanguage {
 }
 
 function isUsable(readiness: string | undefined): boolean {
-  return readiness === 'available' || readiness === 'downloadable' || readiness === 'downloading'
+  return readiness === 'available'
 }
 
 function hasTool(tools: ToolCatalogEntry[], name: string): boolean {
@@ -313,32 +351,50 @@ function buildConversationalPlan(
 ): PlanResult {
   const history = formatConversationHistory(goal.context?.conversationHistory)
   const instruction = goal.instruction.trim()
-  const canSearch = hasTool(tools, 'searchWeb') && hasTool(tools, 'extractPage')
+  const canSearch = hasTool(tools, 'searchWeb')
   const wantsResearch =
     canSearch &&
     (looksLikeWebSearchRequest(instruction) || looksLikeDeepResearchRequest(instruction))
   const pageGrounded = looksLikePageGroundedRequest(instruction)
-  const searchQuery = buildWebResearchQuery(instruction, pageContext)
+  const searchQuerySeed = buildWebResearchQuery(instruction, pageContext)
+  const pageTitle = pageTitleFromContext(pageContext)
 
   const steps: AgentStep[] = []
 
   if (wantsResearch) {
     steps.push({
-      id: 'search',
-      tool: 'searchWeb',
-      input: { query: searchQuery },
+      id: 'rewriteQuery',
+      tool: 'prompt',
+      input: {
+        responseConstraint: QUERY_CONSTRAINT,
+        text: `${WEB_RESEARCH_QUERY_REWRITE_INSTRUCTIONS}
+
+Page title:
+${pageTitle || '(none)'}
+
+User request:
+${instruction}
+
+Suggested seed (use if helpful, improve if needed):
+${searchQuerySeed}
+
+Return JSON with a single string field "query".`,
+      },
     })
     steps.push({
-      id: 'extractSearch',
-      tool: 'extractPage',
-      input: { tabId: { $from: 'search.tabId' } },
-      dependsOn: ['search'],
+      id: 'search',
+      tool: 'searchWeb',
+      input: {
+        query: { $from: 'rewriteQuery.structured.query' },
+        fallbackQuery: searchQuerySeed,
+      },
+      dependsOn: ['rewriteQuery'],
     })
     steps.push({
       id: 'detect',
       tool: 'detectLanguage',
-      input: { text: { $from: 'extractSearch.mainText' } },
-      dependsOn: ['extractSearch'],
+      input: { text: { $from: 'search.mainText' } },
+      dependsOn: ['search'],
     })
     steps.push({
       id: 'reply',
@@ -348,8 +404,8 @@ function buildConversationalPlan(
         responseConstraint: REPLY_CONSTRAINT,
         text: {
           $concat: [
-            `${CONVERSATIONAL_REPLY_INSTRUCTIONS}\n\nThe user wants research depth. A search-results page was opened in the Agent Workspace. Use the raw results text below (not invent sites). Prefer a shortlist of the most relevant titles/snippets with why each deepens the topic. If the SERP text is thin or blocked, say so in one line.\n\nUser request:\n${instruction}\n\nSearch query used:\n${searchQuery}\n\nPrior conversation:\n${history}\n\nSearch results page text:\n`,
-            { $truncate: { $from: 'extractSearch.mainText' }, maxChars: 12_000 },
+            `${CONVERSATIONAL_REPLY_INSTRUCTIONS}\n\nThe user wants research depth. Search results were gathered in the background (no required SERP tab). Ground the reply STRICTLY in the raw results text below — do not invent sites, URLs, or citations that are not present in that text. Prefer a shortlist of the most relevant titles/snippets with why each deepens the topic. If the SERP text is thin, say only what the extract supports.\n\nUser request:\n${instruction}\n\nSearch query seed:\n${searchQuerySeed}\n\nPrior conversation:\n${history}\n\nSearch results text:\n`,
+            { $truncate: { $from: 'search.mainText' }, maxChars: 12_000 },
             '\n\nReturn JSON with a single string field "reply" containing your answer.',
           ],
         },
@@ -493,7 +549,7 @@ function planWorkflow(
   if (workflowId === 'conversational') {
     const required = ['detectLanguage', 'prompt']
     if (researchIntent && hasTool(tools, 'searchWeb')) {
-      required.push('searchWeb', 'extractPage')
+      required.push('searchWeb')
     } else if (looksLikePageGroundedRequest(instruction)) {
       required.push('summarize')
     }
@@ -575,4 +631,5 @@ export const PLANNER_RESPONSE_CONSTRAINTS = {
   concepts: CONCEPTS_CONSTRAINT,
   learningPath: LEARNING_PATH_CONSTRAINT,
   reply: REPLY_CONSTRAINT,
+  query: QUERY_CONSTRAINT,
 } as const

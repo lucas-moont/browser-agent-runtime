@@ -81,8 +81,20 @@ export {
   looksLikePageGroundedRequest,
   extractWebSearchQuery,
   buildWebResearchQuery,
+  WEB_RESEARCH_QUERY_REWRITE_INSTRUCTIONS,
   type PlannerInput,
 } from './Planner'
+
+export {
+  MAX_SEARCH_QUERY_CHARS,
+  stripInstructionalSearchProse,
+  compactSearchQuery,
+  topicExtrasFromInstruction,
+  evaluateSearchQueryQuality,
+  assertGoodSearchQuery,
+  type SearchQueryQualityFixture,
+  type SearchQueryQualityIssue,
+} from './webResearchQueryQuality'
 
 export {
   WorkflowExecutor,

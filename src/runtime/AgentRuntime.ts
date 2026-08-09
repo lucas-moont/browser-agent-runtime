@@ -33,6 +33,7 @@ export type AgentRunOptions = {
   goal: Goal
   tabId?: number
   groupId?: number
+  signal?: AbortSignal
 }
 
 const LOCALIZE_SKIP_KEYS = new Set([
@@ -279,6 +280,14 @@ export class AgentRuntime {
     return this.getState()
   }
 
+  private cancel(reason = 'Cancelled'): AgentState {
+    this.state.status = 'cancelled'
+    this.state.error = reason
+    this.emit({ type: 'agent_cancelled', reason })
+    this.running = false
+    return this.getState()
+  }
+
   async run(options: AgentRunOptions): Promise<AgentState> {
     if (this.running) {
       throw new Error('AgentRuntime already has an active run')
@@ -293,6 +302,10 @@ export class AgentRuntime {
 
     this.emit({ type: 'goal_received' })
 
+    if (options.signal?.aborted) {
+      return this.cancel()
+    }
+
     const policyDecision = this.policy.authorizeGoal(options.goal)
     if (!policyDecision.allowed) {
       return this.fail(policyDecision.reason)
@@ -301,8 +314,8 @@ export class AgentRuntime {
     const preferred = preferredFromGoal(options.goal)
     const workingFoundation = workingFoundationLanguage(preferred)
     const toolContext =
-      options.tabId !== undefined || options.groupId !== undefined
-        ? { tabId: options.tabId, groupId: options.groupId }
+      options.tabId !== undefined || options.groupId !== undefined || options.signal !== undefined
+        ? { tabId: options.tabId, groupId: options.groupId, signal: options.signal }
         : undefined
 
     let pageContext: unknown
@@ -313,6 +326,10 @@ export class AgentRuntime {
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Failed to collect PageContext'
       return this.fail(reason)
+    }
+
+    if (options.signal?.aborted) {
+      return this.cancel()
     }
 
     let snapshot: CapabilitySnapshot
@@ -344,11 +361,16 @@ export class AgentRuntime {
     this.state.workflowId = plan.workflowId
     this.emit({ type: 'plan_created', workflowId: plan.workflowId })
 
+    if (options.signal?.aborted) {
+      return this.cancel()
+    }
+
     const execution = await this.executor.execute({
       plan,
       tools: this.tools,
       context: pageContext,
       toolContext,
+      signal: options.signal,
       now: this.now,
       onEvent: (event) => {
         if (event.type === 'tool_started') {
@@ -372,7 +394,22 @@ export class AgentRuntime {
     this.state.outputs = execution.outputs
 
     if (!execution.ok) {
+      if (execution.cancelled || options.signal?.aborted) {
+        return this.cancel(execution.reason)
+      }
       return this.fail(execution.reason)
+    }
+
+    if (plan.workflowId === 'conversational') {
+      const search = asRecord(execution.outputs.search)
+      if ('mainText' in search) {
+        const mainText = search.mainText
+        if (typeof mainText !== 'string' || mainText.trim().length === 0) {
+          return this.fail(
+            'Search results were empty or blocked — cannot ground a research reply',
+          )
+        }
+      }
     }
 
     let rawResult = buildResult(plan.workflowId, execution.outputs, preferred)

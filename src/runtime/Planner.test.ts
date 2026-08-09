@@ -243,7 +243,7 @@ describe('Planner seam', () => {
     expect(JSON.stringify(promptInput.text.$concat)).toContain('Page notes')
   })
 
-  it('plans web-search asks as searchWeb → extract → reply with raw truncated SERP text', () => {
+  it('plans web-search asks as rewrite → searchWeb → reply with raw truncated SERP text', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: { instruction: 'Can you search the internet for orchestrator memory?' },
@@ -256,21 +256,27 @@ describe('Planner seam', () => {
       return
     }
     expect(result.plan.steps.map((step) => step.tool)).toEqual([
+      'prompt',
       'searchWeb',
-      'extractPage',
       'detectLanguage',
       'prompt',
     ])
-    const searchInput = result.plan.steps[0]?.input as { query: string }
-    expect(searchInput.query).toContain('orchestrator memory')
+    expect(result.plan.steps[0]?.id).toBe('rewriteQuery')
+    const searchInput = result.plan.steps[1]?.input as {
+      query: { $from: string }
+      fallbackQuery: string
+    }
+    expect(searchInput.query.$from).toBe('rewriteQuery.structured.query')
+    expect(searchInput.fallbackQuery.toLowerCase()).toContain('orchestrator')
     const reply = result.plan.steps.find((step) => step.id === 'reply')?.input as {
       text: { $concat: unknown[] }
     }
     expect(JSON.stringify(reply.text.$concat)).toContain('$truncate')
-    expect(JSON.stringify(reply.text.$concat)).toContain('extractSearch.mainText')
+    expect(JSON.stringify(reply.text.$concat)).toContain('search.mainText')
+    expect(JSON.stringify(reply.text.$concat)).toContain('STRICTLY')
   })
 
-  it('plans deep follow-ups as research using the page title in the query', () => {
+  it('plans deep follow-ups as research using the page title in the query seed', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: {
@@ -285,9 +291,10 @@ describe('Planner seam', () => {
     if (!result.ok) {
       return
     }
-    expect(result.plan.steps[0]?.tool).toBe('searchWeb')
-    const searchInput = result.plan.steps[0]?.input as { query: string }
-    expect(searchInput.query).toContain('Subagents and orchestrator memory')
+    expect(result.plan.steps[0]?.id).toBe('rewriteQuery')
+    expect(result.plan.steps[1]?.tool).toBe('searchWeb')
+    const searchInput = result.plan.steps[1]?.input as { fallbackQuery: string }
+    expect(searchInput.fallbackQuery).toContain('Subagents and orchestrator memory')
   })
 
   it('keeps general chat free of page summarize steps', () => {

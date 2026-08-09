@@ -2,7 +2,11 @@ import { resolveStepInput } from './inputRefs'
 import type { AgentStep, Plan } from './types'
 
 export type WorkflowToolRegistry = {
-  execute(name: string, input: unknown, context?: { tabId?: number }): Promise<unknown>
+  execute(
+    name: string,
+    input: unknown,
+    context?: { tabId?: number; groupId?: number; signal?: AbortSignal },
+  ): Promise<unknown>
 }
 
 export type WorkflowExecutorEvent = {
@@ -25,13 +29,15 @@ export type WorkflowExecutorResult =
       events: WorkflowExecutorEvent[]
       reason: string
       failedStepId?: string
+      cancelled?: boolean
     }
 
 export type WorkflowExecutorOptions = {
   plan: Plan
   tools: WorkflowToolRegistry
   context?: unknown
-  toolContext?: { tabId?: number }
+  toolContext?: { tabId?: number; groupId?: number; signal?: AbortSignal }
+  signal?: AbortSignal
   now?: () => number
   onEvent?: (event: WorkflowExecutorEvent) => void
 }
@@ -45,23 +51,50 @@ export function toolTimeoutMs(tool: string): number {
   return AI_TOOLS.has(tool) ? AI_TOOL_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS
 }
 
+export function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false
+  }
+  const name = 'name' in error ? String((error as { name?: unknown }).name) : ''
+  return name === 'AbortError'
+}
+
 export function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   message: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException(message, 'AbortError'))
+      return
+    }
+
     const timer = setTimeout(() => {
       reject(new Error(message))
     }, timeoutMs)
 
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new DOMException('Cancelled', 'AbortError'),
+      )
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+
     promise.then(
       (value) => {
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         resolve(value)
       },
       (error: unknown) => {
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         reject(error)
       },
     )
@@ -125,6 +158,7 @@ export class WorkflowExecutor {
     const now = options.now ?? (() => Date.now())
     const outputs: Record<string, unknown> = {}
     const events: WorkflowExecutorEvent[] = []
+    const runSignal = options.signal ?? options.toolContext?.signal
     const emit = (event: WorkflowExecutorEvent) => {
       events.push(event)
       options.onEvent?.(event)
@@ -141,6 +175,25 @@ export class WorkflowExecutor {
     }
 
     for (const step of ordered) {
+      if (runSignal?.aborted) {
+        const reason = 'Cancelled'
+        emit({
+          type: 'tool_failed',
+          at: now(),
+          stepId: step.id,
+          tool: step.tool,
+          reason,
+        })
+        return {
+          ok: false,
+          outputs,
+          events,
+          reason,
+          failedStepId: step.id,
+          cancelled: true,
+        }
+      }
+
       const started: WorkflowExecutorEvent = {
         type: 'tool_started',
         at: now(),
@@ -170,12 +223,37 @@ export class WorkflowExecutor {
         }
       }
 
+      const stepController = new AbortController()
+      const onParentAbort = () => {
+        stepController.abort(runSignal?.reason ?? new DOMException('Cancelled', 'AbortError'))
+      }
+      if (runSignal) {
+        if (runSignal.aborted) {
+          onParentAbort()
+        } else {
+          runSignal.addEventListener('abort', onParentAbort, { once: true })
+        }
+      }
+
+      const timeoutMs = toolTimeoutMs(step.tool)
+      const timeoutTimer = setTimeout(() => {
+        stepController.abort(new Error(`Tool "${step.tool}" timed out`))
+      }, timeoutMs)
+
+      const toolContext = {
+        ...options.toolContext,
+        signal: stepController.signal,
+      }
+
       try {
         const output = await withTimeout(
-          options.tools.execute(step.tool, resolvedInput, options.toolContext),
-          toolTimeoutMs(step.tool),
+          options.tools.execute(step.tool, resolvedInput, toolContext),
+          timeoutMs + 1_000,
           `Tool "${step.tool}" timed out`,
+          stepController.signal,
         )
+        clearTimeout(timeoutTimer)
+        runSignal?.removeEventListener('abort', onParentAbort)
         outputs[step.id] = output
         emit({
           type: 'tool_completed',
@@ -184,7 +262,15 @@ export class WorkflowExecutor {
           tool: step.tool,
         })
       } catch (error) {
-        const reason = error instanceof Error ? error.message : 'Tool execution failed'
+        clearTimeout(timeoutTimer)
+        runSignal?.removeEventListener('abort', onParentAbort)
+        const cancelled = isAbortError(error) || runSignal?.aborted === true
+        const reason =
+          error instanceof Error
+            ? error.message
+            : cancelled
+              ? 'Cancelled'
+              : 'Tool execution failed'
         emit({
           type: 'tool_failed',
           at: now(),
@@ -196,8 +282,9 @@ export class WorkflowExecutor {
           ok: false,
           outputs,
           events,
-          reason,
+          reason: cancelled && !reason.toLowerCase().includes('timed out') ? 'Cancelled' : reason,
           failedStepId: step.id,
+          cancelled: cancelled && !reason.toLowerCase().includes('timed out'),
         }
       }
     }

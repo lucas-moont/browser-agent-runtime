@@ -209,4 +209,45 @@ describe('WorkflowExecutor seam', () => {
     expect(result.reason).toContain('timed out')
     expect(result.events.some((event) => event.type === 'tool_failed')).toBe(true)
   })
+
+  it('aborts remaining steps when the run signal aborts', async () => {
+    const controller = new AbortController()
+    const tools = {
+      execute: vi.fn(async (name: string, _input: unknown, context?: { signal?: AbortSignal }) => {
+        if (name === 'slow') {
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = () => reject(new DOMException('Cancelled', 'AbortError'))
+            if (context?.signal?.aborted) {
+              onAbort()
+              return
+            }
+            context?.signal?.addEventListener('abort', onAbort, { once: true })
+            setTimeout(() => {
+              context?.signal?.removeEventListener('abort', onAbort)
+              resolve()
+            }, 50)
+          })
+          return { ok: true }
+        }
+        return { ok: true }
+      }),
+    }
+    const plan: Plan = {
+      workflowId: 'conversational',
+      steps: [
+        { id: 'a', tool: 'slow', input: {} },
+        { id: 'b', tool: 'fast', input: {}, dependsOn: ['a'] },
+      ],
+    }
+
+    const pending = createWorkflowExecutor().execute({ plan, tools, signal: controller.signal })
+    controller.abort()
+    const result = await pending
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.cancelled).toBe(true)
+    expect(tools.execute.mock.calls.map((call) => call[0])).toEqual(['slow'])
+  })
 })
