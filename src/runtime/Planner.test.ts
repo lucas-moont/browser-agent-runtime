@@ -18,7 +18,7 @@ const ALL_AVAILABLE: CapabilitySnapshotLike = {
 }
 
 describe('Planner seam', () => {
-  it('maps Analyze Page goal to detect → summarize → prompt concepts with coherent dependsOn', () => {
+  it('treats Analyze Page suggestion text as conversational page-grounded plan', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: { instruction: 'Analyze this page.' },
@@ -30,24 +30,21 @@ describe('Planner seam', () => {
     if (!result.ok) {
       return
     }
-    expect(result.plan.workflowId).toBe('analyzePage')
+    expect(result.plan.workflowId).toBe('conversational')
     expect(result.plan.steps.map((step) => step.tool)).toEqual([
       'detectLanguage',
       'summarize',
       'prompt',
     ])
-    expect(result.plan.steps.map((step) => step.id)).toEqual(['detect', 'summarize', 'concepts'])
-    expect(result.plan.steps[1]?.dependsOn).toEqual(['detect'])
-    expect(result.plan.steps[2]?.dependsOn).toEqual(['summarize'])
-    expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'en' })
+    expect(result.plan.steps.map((step) => step.id)).toEqual(['detect', 'summarize', 'reply'])
     expect(result.plan.steps[2]?.input).toMatchObject({
       responseConstraint: expect.objectContaining({
-        required: expect.arrayContaining(['concepts', 'topics']),
+        required: expect.arrayContaining(['reply']),
       }),
     })
   })
 
-  it('maps Learning Path goal to detect → summarize → prompt learning-path constraint', () => {
+  it('treats Learning Path suggestion text as conversational page-grounded plan', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: { instruction: 'Turn this page into a learning path.' },
@@ -59,26 +56,15 @@ describe('Planner seam', () => {
     if (!result.ok) {
       return
     }
-    expect(result.plan.workflowId).toBe('learningPath')
+    expect(result.plan.workflowId).toBe('conversational')
     expect(result.plan.steps.map((step) => `${step.id}:${step.tool}`)).toEqual([
       'detect:detectLanguage',
       'summarize:summarize',
-      'learningPath:prompt',
+      'reply:prompt',
     ])
-    expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'en' })
-    expect(result.plan.steps[2]?.input).toMatchObject({
-      responseConstraint: expect.objectContaining({
-        required: expect.arrayContaining([
-          'prerequisites',
-          'concepts',
-          'sequence',
-          'nextTopics',
-        ]),
-      }),
-    })
   })
 
-  it('plans summarizePage with preferred=pt as detect → summarize → translate to pt', () => {
+  it('plans Summarize suggestion with preferred=pt as conversational (outbound localize later)', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: {
@@ -93,23 +79,18 @@ describe('Planner seam', () => {
     if (!result.ok) {
       return
     }
-    expect(result.plan.workflowId).toBe('summarizePage')
+    expect(result.plan.workflowId).toBe('conversational')
     expect(result.plan.steps.map((step) => step.tool)).toEqual([
       'detectLanguage',
       'summarize',
-      'translate',
+      'prompt',
     ])
     const summarizeInput = result.plan.steps[1]?.input as Record<string, unknown>
     expect(summarizeInput).toMatchObject({ outputLanguage: 'en' })
     expect(summarizeInput).not.toMatchObject({ outputLanguage: 'pt' })
-    expect(result.plan.steps[2]?.input).toEqual({
-      text: { $from: 'summarize.summary' },
-      sourceLanguage: { $from: 'summarize.foundationLanguage' },
-      targetLanguage: 'pt',
-    })
   })
 
-  it('plans summarizePage with preferred=en without outbound translate', () => {
+  it('plans Summarize suggestion with preferred=en without translate step in the plan', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: {
@@ -124,15 +105,16 @@ describe('Planner seam', () => {
     if (!result.ok) {
       return
     }
-    expect(result.plan.workflowId).toBe('summarizePage')
+    expect(result.plan.workflowId).toBe('conversational')
     expect(result.plan.steps.map((step) => step.tool)).toEqual([
       'detectLanguage',
       'summarize',
+      'prompt',
     ])
     expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'en' })
   })
 
-  it('plans summarizePage with preferred foundation ja using summarize outputLanguage', () => {
+  it('plans Summarize suggestion with preferred ja using summarize outputLanguage', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: {
@@ -150,11 +132,12 @@ describe('Planner seam', () => {
     expect(result.plan.steps.map((step) => step.tool)).toEqual([
       'detectLanguage',
       'summarize',
+      'prompt',
     ])
     expect(result.plan.steps[1]?.input).toMatchObject({ outputLanguage: 'ja' })
   })
 
-  it('degrades Analyze Page when Prompt is unavailable but Summarizer is available', () => {
+  it('cannot plan page-grounded suggestion text when Prompt is unavailable', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: { instruction: 'Analyze this page and list key concepts.' },
@@ -165,15 +148,14 @@ describe('Planner seam', () => {
       tools: FULL_CATALOG,
     })
 
-    expect(result.ok).toBe(true)
-    if (!result.ok) {
+    expect(result.ok).toBe(false)
+    if (result.ok) {
       return
     }
-    expect(result.plan.steps.map((step) => step.tool)).toEqual(['detectLanguage', 'summarize'])
-    expect(result.plan.steps.some((step) => step.tool === 'prompt')).toBe(false)
+    expect(result.reason).toMatch(/Prompt/i)
   })
 
-  it('cannot plan Learning Path when Prompt capability is unavailable', () => {
+  it('cannot plan Learning Path suggestion when Prompt capability is unavailable', () => {
     const planner = createPlanner()
     const result = planner.plan({
       goal: { instruction: 'Turn this page into a learning path.' },
@@ -192,7 +174,7 @@ describe('Planner seam', () => {
     expect(result.missingCapabilities).toContain('prompt')
   })
 
-  it('never emits Writer/Rewriter/Proofreader steps for demo goals', () => {
+  it('never emits Writer/Rewriter/Proofreader steps for suggestion messages', () => {
     const planner = createPlanner()
     const tools: ToolCatalogEntry[] = [
       ...FULL_CATALOG,
@@ -215,6 +197,7 @@ describe('Planner seam', () => {
       if (!result.ok) {
         continue
       }
+      expect(result.plan.workflowId).toBe('conversational')
       const names = result.plan.steps.map((step) => step.tool.toLowerCase())
       expect(names).not.toContain('writer')
       expect(names).not.toContain('rewriter')
@@ -256,6 +239,76 @@ describe('Planner seam', () => {
     expect(promptInput.responseConstraint.required).toContain('reply')
     expect(JSON.stringify(promptInput.text.$concat)).toContain('three main risks')
     expect(JSON.stringify(promptInput.text.$concat)).toContain('Prior conversation')
+    expect(JSON.stringify(promptInput.text.$concat)).toContain('actually help')
+    expect(JSON.stringify(promptInput.text.$concat)).toContain('Page notes')
+  })
+
+  it('plans web-search asks as searchWeb → extract → reply with raw truncated SERP text', () => {
+    const planner = createPlanner()
+    const result = planner.plan({
+      goal: { instruction: 'Can you search the internet for orchestrator memory?' },
+      capabilities: ALL_AVAILABLE,
+      tools: [...FULL_CATALOG, { name: 'searchWeb', description: 'search', capabilities: [] }],
+      pageContext: { title: 'Orchestrator memory' },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.plan.steps.map((step) => step.tool)).toEqual([
+      'searchWeb',
+      'extractPage',
+      'detectLanguage',
+      'prompt',
+    ])
+    const searchInput = result.plan.steps[0]?.input as { query: string }
+    expect(searchInput.query).toContain('orchestrator memory')
+    const reply = result.plan.steps.find((step) => step.id === 'reply')?.input as {
+      text: { $concat: unknown[] }
+    }
+    expect(JSON.stringify(reply.text.$concat)).toContain('$truncate')
+    expect(JSON.stringify(reply.text.$concat)).toContain('extractSearch.mainText')
+  })
+
+  it('plans deep follow-ups as research using the page title in the query', () => {
+    const planner = createPlanner()
+    const result = planner.plan({
+      goal: {
+        instruction:
+          'You can think for yourself. Bring me the most interesting ones that correlate and will make my knowledge of the subject go in depth.',
+      },
+      capabilities: ALL_AVAILABLE,
+      tools: [...FULL_CATALOG, { name: 'searchWeb', description: 'search', capabilities: [] }],
+      pageContext: { title: 'Subagents and orchestrator memory' },
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.plan.steps[0]?.tool).toBe('searchWeb')
+    const searchInput = result.plan.steps[0]?.input as { query: string }
+    expect(searchInput.query).toContain('Subagents and orchestrator memory')
+  })
+
+  it('keeps general chat free of page summarize steps', () => {
+    const planner = createPlanner()
+    const result = planner.plan({
+      goal: { instruction: 'What do you think about typed agent runtimes?' },
+      capabilities: ALL_AVAILABLE,
+      tools: FULL_CATALOG,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.plan.steps.map((step) => step.tool)).toEqual(['detectLanguage', 'prompt'])
+    const promptInput = result.plan.steps.find((step) => step.id === 'reply')?.input as {
+      text: { $concat: unknown[] }
+    }
+    const blob = JSON.stringify(promptInput.text.$concat)
+    expect(blob).toContain('What do you think about typed agent runtimes?')
+    expect(blob).toContain('No page extract is included')
+    expect(blob).toContain('Do not')
   })
 
   it('cannot plan free-form conversation when Prompt is unavailable', () => {

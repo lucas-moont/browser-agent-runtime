@@ -52,6 +52,99 @@ const REPLY_CONSTRAINT = {
   additionalProperties: false,
 } as const
 
+/** System instructions for free-form Prompt replies (kept explicit for Planner tests). */
+export const CONVERSATIONAL_REPLY_INSTRUCTIONS = `You are Browser Agent Runtime — an on-device assistant (Chrome Built-in AI Prompt API / Gemini Nano) in a side panel.
+
+Mission: actually help. Deliver the user's ask. Be specific, concrete, and useful.
+
+Do:
+- Answer the request directly in the first sentences.
+- Prefer concrete artifacts: claims, trade-offs, steps, named sources/titles/URLs when the prompt includes them.
+- Use page or search text only as evidence — quote or cite specifics from it when relevant.
+- Match the user's language. Stay concise.
+- Use light Markdown when it helps reading: short paragraphs, numbered or bulleted lists, **bold** for key terms. The UI renders Markdown.
+- Prefer real line breaks / Markdown lists — never HTML tags such as br, /br, or b elements.
+
+Do not:
+- Open with filler ("Great question!", "You're right to…", "That's insightful…").
+- End by offering to discuss instead of delivering ("Would you like to brainstorm…?").
+- Invent articles, URLs, or that you browsed beyond text included in this prompt.
+- Paraphrase the whole page when the user asked for judgment, depth, or a shortlist.
+- Dump raw Markdown that is hard to scan (huge headings, nested code fences for plain prose).
+- Emit HTML markup in the reply string.
+
+If evidence in the prompt is thin, say what is missing in one line, then give the best concrete help you can with what you have.`
+
+export function looksLikeWebSearchRequest(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase()
+  if (!normalized) {
+    return false
+  }
+  return (
+    (/\b(search|google|pesquis|busca)\b/.test(normalized) &&
+      /\b(web|internet|online|google|net|rede)\b/.test(normalized)) ||
+    /^(search|google|pesquis[ae]|busca)\b/.test(normalized) ||
+    /\b(more articles|artigos (parecidos|relacionados)|like this)\b/.test(normalized)
+  )
+}
+
+export function looksLikeDeepResearchRequest(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase()
+  if (!normalized) {
+    return false
+  }
+  return /\b(most interesting|correlate|in depth|go (in )?depth|deepen|related (papers|articles|reading)|aprofund|correlacion|mais interessantes|em profundidade)\b/.test(
+    normalized,
+  )
+}
+
+export function looksLikePageGroundedRequest(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase()
+  if (!normalized) {
+    return false
+  }
+  return /\b(this (page|article|doc|post|text)|the page|on this page|esta página|neste artigo|acima|this tab|summarize|resumo|analyze this|analis[ae] (esta|isso)|learning path|study path)\b/.test(
+    normalized,
+  )
+}
+
+export function extractWebSearchQuery(instruction: string): string {
+  const trimmed = instruction.trim()
+  const stripped = trimmed
+    .replace(/^(can you |could you |please |você (pode|poderia) |pode |por favor )+/i, '')
+    .replace(
+      /^(search (the )?(web|internet|online) (for (me )?)?(about )?|google |look up (online )?|find online |pesquis(ar|e) (na (web|internet) )?(por |sobre )?|busca(r)? (na (web|internet) )?(por |sobre )?)/i,
+      '',
+    )
+    .replace(/\?+$/, '')
+    .trim()
+  return stripped || trimmed
+}
+
+function pageTitleFromContext(pageContext: unknown): string {
+  if (pageContext !== null && typeof pageContext === 'object' && !Array.isArray(pageContext)) {
+    const title = (pageContext as { title?: unknown }).title
+    if (typeof title === 'string' && title.trim()) {
+      return title.trim()
+    }
+  }
+  return ''
+}
+
+export function buildWebResearchQuery(instruction: string, pageContext: unknown): string {
+  const fromInstruction = extractWebSearchQuery(instruction)
+  const title = pageTitleFromContext(pageContext)
+  if (
+    title &&
+    (/\blike this\b/i.test(instruction) ||
+      looksLikeDeepResearchRequest(instruction) ||
+      /\bmore articles\b/i.test(instruction))
+  ) {
+    return `${title} ${fromInstruction}`.trim().slice(0, 240)
+  }
+  return fromInstruction.slice(0, 240)
+}
+
 function preferredFromGoal(goal: Goal): PreferredLanguage {
   return parsePreferredLanguage(goal.context?.preferredLanguage)
 }
@@ -215,28 +308,39 @@ function buildSummarizePagePlan(preferred: PreferredLanguage): PlanResult {
 function buildConversationalPlan(
   preferred: PreferredLanguage,
   goal: Goal,
+  tools: ToolCatalogEntry[],
+  pageContext: unknown,
 ): PlanResult {
-  const workingFoundation = workingFoundationLanguage(preferred)
   const history = formatConversationHistory(goal.context?.conversationHistory)
   const instruction = goal.instruction.trim()
+  const canSearch = hasTool(tools, 'searchWeb') && hasTool(tools, 'extractPage')
+  const wantsResearch =
+    canSearch &&
+    (looksLikeWebSearchRequest(instruction) || looksLikeDeepResearchRequest(instruction))
+  const pageGrounded = looksLikePageGroundedRequest(instruction)
+  const searchQuery = buildWebResearchQuery(instruction, pageContext)
 
-  const steps: AgentStep[] = [
-    {
+  const steps: AgentStep[] = []
+
+  if (wantsResearch) {
+    steps.push({
+      id: 'search',
+      tool: 'searchWeb',
+      input: { query: searchQuery },
+    })
+    steps.push({
+      id: 'extractSearch',
+      tool: 'extractPage',
+      input: { tabId: { $from: 'search.tabId' } },
+      dependsOn: ['search'],
+    })
+    steps.push({
       id: 'detect',
       tool: 'detectLanguage',
-      input: { text: { $from: 'context.mainText' } },
-    },
-    {
-      id: 'summarize',
-      tool: 'summarize',
-      input: {
-        text: { $from: 'context.mainText' },
-        sourceLanguage: { $from: 'detect.language' },
-        outputLanguage: workingFoundation,
-      },
-      dependsOn: ['detect'],
-    },
-    {
+      input: { text: { $from: 'extractSearch.mainText' } },
+      dependsOn: ['extractSearch'],
+    })
+    steps.push({
       id: 'reply',
       tool: 'prompt',
       input: {
@@ -244,15 +348,75 @@ function buildConversationalPlan(
         responseConstraint: REPLY_CONSTRAINT,
         text: {
           $concat: [
-            `You are a helpful assistant for the current browser page. Answer the user's request using the page summary. Be concise and useful.\n\nUser request:\n${instruction}\n\nPrior conversation:\n${history}\n\nPage summary:\n`,
-            { $from: 'summarize.summary' },
+            `${CONVERSATIONAL_REPLY_INSTRUCTIONS}\n\nThe user wants research depth. A search-results page was opened in the Agent Workspace. Use the raw results text below (not invent sites). Prefer a shortlist of the most relevant titles/snippets with why each deepens the topic. If the SERP text is thin or blocked, say so in one line.\n\nUser request:\n${instruction}\n\nSearch query used:\n${searchQuery}\n\nPrior conversation:\n${history}\n\nSearch results page text:\n`,
+            { $truncate: { $from: 'extractSearch.mainText' }, maxChars: 12_000 },
             '\n\nReturn JSON with a single string field "reply" containing your answer.',
           ],
         },
       },
-      dependsOn: ['summarize'],
-    },
-  ]
+      dependsOn: ['detect'],
+    })
+  } else if (pageGrounded) {
+    const workingFoundation = workingFoundationLanguage(preferred)
+    steps.push(
+      {
+        id: 'detect',
+        tool: 'detectLanguage',
+        input: { text: { $from: 'context.mainText' } },
+      },
+      {
+        id: 'summarize',
+        tool: 'summarize',
+        input: {
+          text: { $from: 'context.mainText' },
+          sourceLanguage: { $from: 'detect.language' },
+          outputLanguage: workingFoundation,
+          type: 'key-points',
+          length: 'long',
+        },
+        dependsOn: ['detect'],
+      },
+      {
+        id: 'reply',
+        tool: 'prompt',
+        input: {
+          sourceLanguage: { $from: 'detect.language' },
+          responseConstraint: REPLY_CONSTRAINT,
+          text: {
+            $concat: [
+              `${CONVERSATIONAL_REPLY_INSTRUCTIONS}\n\nThe user is asking about the current Agent Workspace page(s). Use the page notes as evidence.\n\nUser request:\n${instruction}\n\nPrior conversation:\n${history}\n\nPage notes:\n`,
+              { $from: 'summarize.summary' },
+              '\n\nReturn JSON with a single string field "reply" containing your answer.',
+            ],
+          },
+        },
+        dependsOn: ['summarize'],
+      },
+    )
+  } else {
+    steps.push(
+      {
+        id: 'detect',
+        tool: 'detectLanguage',
+        input: { text: instruction },
+      },
+      {
+        id: 'reply',
+        tool: 'prompt',
+        input: {
+          sourceLanguage: { $from: 'detect.language' },
+          responseConstraint: REPLY_CONSTRAINT,
+          text: {
+            $concat: [
+              `${CONVERSATIONAL_REPLY_INSTRUCTIONS}\n\nNo page extract is included on purpose — answer from the user request and prior conversation with your own reasoning.\n\nUser request:\n${instruction}\n\nPrior conversation:\n${history}\n`,
+              '\nReturn JSON with a single string field "reply" containing your answer.',
+            ],
+          },
+        },
+        dependsOn: ['detect'],
+      },
+    )
+  }
 
   return {
     ok: true,
@@ -269,11 +433,26 @@ function planWorkflow(
   tools: ToolCatalogEntry[],
   preferred: PreferredLanguage,
   goal: Goal,
+  pageContext: unknown,
 ): PlanResult {
+  const instruction = goal.instruction
+  const researchIntent =
+    looksLikeWebSearchRequest(instruction) || looksLikeDeepResearchRequest(instruction)
+
   const baseMissing = [
     missingCapability(capabilities, 'languageDetector'),
-    missingCapability(capabilities, 'summarizer'),
   ].filter((id): id is string => id !== null)
+
+  const needsSummarizerCapability =
+    workflowId !== 'conversational' ||
+    (looksLikePageGroundedRequest(instruction) && !researchIntent)
+
+  if (needsSummarizerCapability) {
+    const summarizerMissing = missingCapability(capabilities, 'summarizer')
+    if (summarizerMissing) {
+      baseMissing.push(summarizerMissing)
+    }
+  }
 
   const needsTranslator =
     needsOutboundTranslation(preferred) &&
@@ -312,7 +491,12 @@ function planWorkflow(
   }
 
   if (workflowId === 'conversational') {
-    const required = ['detectLanguage', 'summarize', 'prompt']
+    const required = ['detectLanguage', 'prompt']
+    if (researchIntent && hasTool(tools, 'searchWeb')) {
+      required.push('searchWeb', 'extractPage')
+    } else if (looksLikePageGroundedRequest(instruction)) {
+      required.push('summarize')
+    }
     if (needsOutboundTranslation(preferred)) {
       required.push('translate')
     }
@@ -320,7 +504,7 @@ function planWorkflow(
     if (toolError) {
       return { ok: false, reason: toolError }
     }
-    return buildConversationalPlan(preferred, goal)
+    return buildConversationalPlan(preferred, goal, tools, pageContext)
   }
 
   if (workflowId === 'analyzePage') {
@@ -378,6 +562,7 @@ export class Planner {
       input.tools,
       preferred,
       input.goal,
+      input.pageContext,
     )
   }
 }
