@@ -5,6 +5,7 @@ const STATUS_COPY: Record<Status, string> = {
   running: 'Running',
   completed: 'Completed',
   failed: 'Failed',
+  cancelled: 'Cancelled',
 }
 
 export function AgentStatusView({ status }: { status: Status }) {

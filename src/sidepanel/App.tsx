@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { resolveActiveTabId } from '../adapters/chrome-messaging'
+import { downloadPromptModel } from '../adapters/chrome-ai/sessionAdapters'
 import {
   createChromeAgentWorkspace,
   type AgentWorkspacePort,
@@ -100,6 +101,7 @@ export type AppProps = {
   loadCapabilities?: (preferredLanguage?: PreferredLanguage) => Promise<CapabilitySnapshot>
   detectMessageLanguage?: (text: string, fallback: PreferredLanguage) => Promise<PreferredLanguage>
   workspace?: AgentWorkspacePort
+  downloadModels?: (onProgress?: (loaded: number) => void) => Promise<void>
 }
 
 function nextMessageId(prefix: string): string {
@@ -117,9 +119,11 @@ export function App({
   loadCapabilities = async (preferredLanguage = 'en') => {
     const registry = createSidePanelCapabilityRegistry()
     const preferred = parsePreferredLanguage(preferredLanguage)
+    const foundation = workingFoundationLanguage(preferred)
     return registry.snapshot({
+      outputLanguage: foundation,
       translator: {
-        sourceLanguage: workingFoundationLanguage(preferred),
+        sourceLanguage: foundation,
         targetLanguage: preferred,
       },
     })
@@ -131,8 +135,21 @@ export function App({
       return fallback
     }
   },
-  workspace = createChromeAgentWorkspace(),
+  workspace: workspaceProp,
+  downloadModels = async (onProgress) => {
+    await downloadPromptModel({
+      onProgress: (progress) => onProgress?.(progress.loaded),
+    })
+  },
 }: AppProps = {}) {
+  const workspaceHold = useRef<AgentWorkspacePort | null>(null)
+  if (workspaceProp) {
+    workspaceHold.current = workspaceProp
+  } else if (!workspaceHold.current) {
+    workspaceHold.current = createChromeAgentWorkspace()
+  }
+  const workspace = workspaceHold.current
+
   const homeTabId = homeTabIdProp ?? readHomeTabId()
   const resolveHomeTabId =
     resolveTabId ??
@@ -154,7 +171,12 @@ export function App({
   const prevMessageCountRef = useRef(0)
   const runLockRef = useRef(false)
   const runtimeRef = useRef<AgentRuntime | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
   const sessionStartedRef = useRef(false)
+  const groupIdRef = useRef<number | undefined>(undefined)
+  const endedSessionRef = useRef(false)
+  const workspaceRef = useRef(workspace)
+  workspaceRef.current = workspace
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>(DEFAULT_CAPABILITY_SNAPSHOT)
   const [languageMode, setLanguageMode] = useState<LanguagePreferenceMode>('auto')
   const [lastDetectedLanguage, setLastDetectedLanguage] = useState<PreferredLanguage>('en')
@@ -164,13 +186,23 @@ export function App({
   const [groupId, setGroupId] = useState<number | undefined>()
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTabInfo[]>([])
   const [workspaceError, setWorkspaceError] = useState<string | undefined>()
+  const [downloadProgress, setDownloadProgress] = useState<number | undefined>()
+  const [downloadError, setDownloadError] = useState<string | undefined>()
+  const [downloading, setDownloading] = useState(false)
 
   const effectivePreferred =
     languageMode === 'auto' ? lastDetectedLanguage : languageMode
+  const promptReady = snapshot.prompt === 'available'
+  const promptDownloadable =
+    snapshot.prompt === 'downloadable' || snapshot.prompt === 'downloading'
+  const promptUnavailable = snapshot.prompt === 'unavailable'
+  const composerBlocked = running || !promptReady
 
   async function refreshWorkspace(sessionGroupId: number) {
     try {
       setGroupId(sessionGroupId)
+      groupIdRef.current = sessionGroupId
+      endedSessionRef.current = false
       const tabs = await workspace.listTabs(sessionGroupId)
       setWorkspaceTabs(tabs)
       setWorkspaceError(undefined)
@@ -214,6 +246,35 @@ export function App({
     sessionStartedRef.current = true
     void startSessionForHomeTab()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one session per panel instance
+  }, [])
+
+  useEffect(() => {
+    async function endSessionOnce() {
+      if (endedSessionRef.current) {
+        return
+      }
+      const id = groupIdRef.current
+      if (typeof id !== 'number') {
+        return
+      }
+      endedSessionRef.current = true
+      try {
+        await workspaceRef.current.endSession(id)
+      } catch {
+        // Panel is closing; ignore teardown errors.
+      }
+    }
+
+    function onPageHide() {
+      void endSessionOnce()
+    }
+
+    // Only ungroup when the panel document is actually going away — never on
+    // React effect cleanup (StrictMode remount / re-render would destroy the group).
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+    }
   }, [])
 
   useEffect(() => {
@@ -275,7 +336,7 @@ export function App({
 
   async function sendGoal(instruction: string) {
     const trimmed = instruction.trim()
-    if (!trimmed || runLockRef.current) {
+    if (!trimmed || runLockRef.current || !promptReady) {
       return
     }
 
@@ -283,6 +344,9 @@ export function App({
     setRunning(true)
     setDraft('')
     stickThreadToBottomRef.current = true
+
+    const controller = new AbortController()
+    abortRef.current = controller
 
     const history: ConversationTurn[] = []
     for (const message of messages) {
@@ -352,6 +416,7 @@ export function App({
         },
         tabId,
         groupId: preparedGroupId,
+        signal: controller.signal,
       })
       setMessages((prev) =>
         prev.map((message) =>
@@ -377,7 +442,7 @@ export function App({
           message.id === assistantId && message.role === 'assistant'
             ? {
                 ...message,
-                status: 'failed',
+                status: latest.status === 'cancelled' ? 'cancelled' : 'failed',
                 workflowId: latest.workflowId,
                 result: latest.result,
                 events:
@@ -397,6 +462,7 @@ export function App({
       )
     } finally {
       window.clearInterval(poll)
+      abortRef.current = null
       runLockRef.current = false
       setRunning(false)
       const latest = runtimeRef.current?.getState()
@@ -419,6 +485,31 @@ export function App({
     }
   }
 
+  function stopRun() {
+    abortRef.current?.abort(new DOMException('Cancelled', 'AbortError'))
+  }
+
+  async function handleDownloadModels() {
+    if (downloading) {
+      return
+    }
+    setDownloading(true)
+    setDownloadError(undefined)
+    setDownloadProgress(0)
+    try {
+      await downloadModels((loaded) => {
+        setDownloadProgress(loaded)
+      })
+      const refreshed = await loadCapabilities(effectivePreferred)
+      setSnapshot(refreshed)
+      setDownloadProgress(undefined)
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : 'Model download failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -426,7 +517,7 @@ export function App({
     }
   }
 
-  const showSuggestions = !running
+  const showSuggestions = !running && promptReady
 
   return (
     <main className="shell shell--chat">
@@ -465,6 +556,42 @@ export function App({
           </label>
         </div>
         <CapabilityStrip snapshot={snapshot} compact />
+        {promptDownloadable || promptUnavailable || downloadError ? (
+          <div className="model-onboarding" role="status">
+            {promptUnavailable ? (
+              <p className="model-onboarding__copy">
+                Prompt is unavailable on this device.{' '}
+                <a
+                  href="https://developer.chrome.com/docs/ai/get-started"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Chrome Built-in AI docs
+                </a>
+              </p>
+            ) : (
+              <p className="model-onboarding__copy">
+                Built-in AI models need a one-time download before chat works.
+                {typeof downloadProgress === 'number'
+                  ? ` ${Math.round(downloadProgress * 100)}%`
+                  : null}
+              </p>
+            )}
+            {promptDownloadable ? (
+              <button
+                type="button"
+                className="model-onboarding__cta"
+                disabled={downloading}
+                onClick={() => {
+                  void handleDownloadModels()
+                }}
+              >
+                {downloading ? 'Downloading…' : 'Download models'}
+              </button>
+            ) : null}
+            {downloadError ? <p className="model-onboarding__error">{downloadError}</p> : null}
+          </div>
+        ) : null}
         <div className="workspace-strip" aria-label="Agent workspace">
           <div className="workspace-strip__badge" aria-hidden="true">
             {Math.max(workspaceTabs.length, 1)}
@@ -536,9 +663,11 @@ export function App({
                 <p className="chat-bubble__status">
                   {message.status === 'completed'
                     ? 'Done'
-                    : message.status === 'failed'
-                      ? 'Failed'
-                      : message.status}
+                    : message.status === 'cancelled'
+                      ? 'Cancelled'
+                      : message.status === 'failed'
+                        ? 'Failed'
+                        : message.status}
                 </p>
               )}
 
@@ -582,7 +711,7 @@ export function App({
                 key={goal.id}
                 type="button"
                 className="suggestion-chips__chip"
-                disabled={running}
+                disabled={composerBlocked}
                 onClick={() => {
                   void sendGoal(goal.instruction)
                 }}
@@ -598,28 +727,45 @@ export function App({
             className="chat-composer__input"
             rows={2}
             value={draft}
-            disabled={running}
-            placeholder="Ask anything about this page…"
+            disabled={composerBlocked}
+            placeholder={
+              promptReady
+                ? 'Ask anything about this page…'
+                : promptUnavailable
+                  ? 'Prompt unavailable on this device'
+                  : 'Download Built-in AI models to chat…'
+            }
             aria-label="Message"
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleComposerKeyDown}
           />
-          <button
-            type="button"
-            className="chat-composer__send"
-            disabled={running || draft.trim().length === 0}
-            aria-label="Send"
-            onClick={() => {
-              void sendGoal(draft)
-            }}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                fill="currentColor"
-                d="M3.4 20.6 20.95 12 3.4 3.4l.1 6.85L15.1 12 3.5 13.75l-.1 6.85Z"
-              />
-            </svg>
-          </button>
+          {running ? (
+            <button
+              type="button"
+              className="chat-composer__stop"
+              aria-label="Stop"
+              onClick={stopRun}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="chat-composer__send"
+              disabled={composerBlocked || draft.trim().length === 0}
+              aria-label="Send"
+              onClick={() => {
+                void sendGoal(draft)
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  fill="currentColor"
+                  d="M3.4 20.6 20.95 12 3.4 3.4l.1 6.85L15.1 12 3.5 13.75l-.1 6.85Z"
+                />
+              </svg>
+            </button>
+          )}
         </div>
       </footer>
     </main>

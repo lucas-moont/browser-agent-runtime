@@ -8,6 +8,7 @@ const EVENT_LABELS: Record<AgentEvent['type'], string> = {
   tool_completed: 'Finished',
   agent_completed: 'Done',
   agent_failed: 'Failed',
+  agent_cancelled: 'Cancelled',
 }
 
 export function formatTraceEventLabel(event: AgentEvent): string {
@@ -24,7 +25,7 @@ export function formatTraceEventLabel(event: AgentEvent): string {
     return `${base}: ${event.tool}`
   }
 
-  if (event.type === 'agent_failed' && event.reason) {
+  if ((event.type === 'agent_failed' || event.type === 'agent_cancelled') && event.reason) {
     return `${base}: ${event.reason}`
   }
 

@@ -73,6 +73,7 @@ function fakeWorkspace(
       }
       return 99
     }),
+    endSession: vi.fn(async () => undefined),
     listTabs: vi.fn(async () =>
       members.map((tab) => ({
         tabId: tab.tabId,
@@ -93,11 +94,21 @@ function fakeWorkspace(
     navigateTab: vi.fn(async () => undefined),
     closeTab: vi.fn(async () => undefined),
     searchWeb: vi.fn(async (_groupId, query) => ({
-      tabId: 3,
-      url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
       query,
+      url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
+      mainText: `Results for ${query}`,
+      results: [],
+      mode: 'fetch' as const,
     })),
   }
+}
+
+async function flushEffects(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
 }
 
 describe('side panel chat shell', () => {
@@ -153,17 +164,59 @@ describe('side panel chat shell', () => {
     expect(container.textContent).toContain('Session workspace')
     expect(container.textContent).not.toContain('Add current tab')
     expect(workspace.createSession).toHaveBeenCalledWith(1)
+    expect(workspace.endSession).not.toHaveBeenCalled()
     expect(container.querySelector('[aria-label="Conversation"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Message"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Suggested prompts"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Suggested prompts"]')).toBeNull()
+    expect(container.textContent).toContain('Download models')
+    expect(container.querySelector('[aria-label="Send"]')?.hasAttribute('disabled')).toBe(true)
 
-    for (const goal of DEMO_GOALS) {
-      expect(container.textContent).toContain(goal.label)
-    }
-
-    expect(DEMO_GOALS.some((goal) => goal.label === 'Summarize')).toBe(true)
     expect(container.textContent).toContain('Detect')
     expect(container.textContent).toContain('off')
+  })
+
+  it('keeps the Agent Workspace group across re-renders (does not endSession)', async () => {
+    const workspace = fakeWorkspace()
+    const { container, root } = mount(
+      <App
+        createRuntime={() =>
+          fakeRuntime({
+            status: 'idle',
+            goal: null,
+            context: null,
+            plan: [],
+            outputs: {},
+            events: [],
+          })
+        }
+        workspace={workspace}
+        homeTabId={1}
+        loadCapabilities={async () => ({
+          languageDetector: 'available',
+          summarizer: 'available',
+          translator: 'available',
+          prompt: 'available',
+        })}
+      />,
+    )
+    mounts.push({ container, root })
+
+    await flushEffects()
+    expect(workspace.createSession).toHaveBeenCalledTimes(1)
+    expect(workspace.endSession).not.toHaveBeenCalled()
+
+    const languageSelect = container.querySelector(
+      '[aria-label="Preferred response language"]',
+    ) as HTMLSelectElement
+    await act(async () => {
+      languageSelect.value = 'ja'
+      languageSelect.dispatchEvent(new Event('change', { bubbles: true }))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(workspace.createSession).toHaveBeenCalledTimes(1)
+    expect(workspace.endSession).not.toHaveBeenCalled()
   })
 
   it('sends a Goal from a suggestion chip with preferred language context', async () => {
@@ -208,6 +261,8 @@ describe('side panel chat shell', () => {
     )
     mounts.push({ container, root })
 
+    await flushEffects()
+
     const analyzeChip = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent === 'Analyze Page',
     )
@@ -228,6 +283,7 @@ describe('side panel chat shell', () => {
       },
       tabId: 7,
       groupId: 99,
+      signal: expect.any(AbortSignal),
     })
 
     expect(container.querySelector('[data-role="user"]')?.textContent).toContain(
@@ -284,6 +340,8 @@ describe('side panel chat shell', () => {
     )
     mounts.push({ container, root })
 
+    await flushEffects()
+
     const languageSelect = container.querySelector(
       '[aria-label="Preferred response language"]',
     ) as HTMLSelectElement
@@ -309,6 +367,7 @@ describe('side panel chat shell', () => {
       },
       tabId: 1,
       groupId: 99,
+      signal: expect.any(AbortSignal),
     })
   })
 
@@ -345,6 +404,8 @@ describe('side panel chat shell', () => {
     )
     mounts.push({ container, root })
 
+    await flushEffects()
+
     const textarea = container.querySelector(
       '[aria-label="Message"]',
     ) as HTMLTextAreaElement
@@ -380,30 +441,23 @@ describe('side panel chat shell', () => {
       },
       tabId: 1,
       groupId: 99,
+      signal: expect.any(AbortSignal),
     })
   })
 
-  it('shows unsupported capability errors inside the assistant bubble', async () => {
-    const failed: AgentState = {
-      status: 'failed',
-      goal: { instruction: DEMO_GOALS[1].instruction },
-      context: null,
-      plan: [],
-      outputs: {},
-      error: 'Missing required capabilities: prompt',
-      events: [
-        { type: 'goal_received', at: 1 },
-        {
-          type: 'agent_failed',
-          at: 2,
-          reason: 'Missing required capabilities: prompt',
-        },
-      ],
-    }
-
+  it('shows unavailable Prompt onboarding instead of sending Goals', async () => {
     const { container, root } = mount(
       <App
-        createRuntime={() => fakeRuntime(failed)}
+        createRuntime={() =>
+          fakeRuntime({
+            status: 'idle',
+            goal: null,
+            context: null,
+            plan: [],
+            outputs: {},
+            events: [],
+          })
+        }
         workspace={fakeWorkspace()}
         homeTabId={1}
         resolveTabId={async () => 1}
@@ -417,18 +471,12 @@ describe('side panel chat shell', () => {
     )
     mounts.push({ container, root })
 
-    const pathChip = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Learning Path',
-    )
-    await act(async () => {
-      pathChip?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-      await Promise.resolve()
-    })
+    await flushEffects()
 
-    expect(container.querySelector('[data-kind="unsupported"]')).not.toBeNull()
-    expect(container.textContent).toContain('Unsupported capability')
-    expect(container.textContent).toContain('Missing required capabilities: prompt')
-    expect(container.textContent).toContain('Failed')
+    expect(container.textContent).toContain('Prompt is unavailable')
+    expect(container.textContent).toContain('Chrome Built-in AI docs')
+    expect(container.querySelector('[aria-label="Suggested prompts"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Send"]')?.hasAttribute('disabled')).toBe(true)
   })
 
   it('keeps prior user messages when sending a second Goal', async () => {
@@ -487,6 +535,8 @@ describe('side panel chat shell', () => {
       />,
     )
     mounts.push({ container, root })
+
+    await flushEffects()
 
     const composer = container.querySelector(
       '[aria-label="Message"]',

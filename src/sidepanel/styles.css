@@ -492,6 +492,65 @@ body {
   cursor: default;
 }
 
+.chat-composer__stop {
+  appearance: none;
+  height: 2rem;
+  min-width: 3.25rem;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  border-radius: 0.55rem;
+  padding: 0 0.65rem;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.model-onboarding {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--panel) 88%, var(--signal));
+}
+
+.model-onboarding__copy,
+.model-onboarding__error {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.model-onboarding__copy a {
+  color: var(--signal);
+}
+
+.model-onboarding__error {
+  color: var(--err);
+}
+
+.model-onboarding__cta {
+  appearance: none;
+  justify-self: start;
+  border: 0;
+  border-radius: 0.45rem;
+  padding: 0.35rem 0.7rem;
+  background: var(--signal);
+  color: #0a0c12;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.model-onboarding__cta:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .agent-status__value {
   margin: 0;
   font-size: 0.875rem;
