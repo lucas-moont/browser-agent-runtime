@@ -16,5 +16,8 @@ export default defineManifest({
     service_worker: 'src/background/service-worker.ts',
     type: 'module',
   },
-  permissions: ['sidePanel', 'activeTab', 'scripting'],
+  permissions: ['sidePanel', 'scripting', 'tabGroups'],
+  // Side-panel clicks do not grant activeTab; page tools need host access to inject.
+  // https://developer.chrome.com/docs/extensions/reference/api/sidePanel
+  host_permissions: ['http://*/*', 'https://*/*'],
 })
