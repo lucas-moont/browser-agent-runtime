@@ -3,8 +3,10 @@ import {
   AGENT_WORKSPACE_TITLE,
   isAllowedWorkspaceUrl,
   type AgentWorkspacePort,
+  type WebSearchResult,
   type WorkspaceTabInfo,
 } from './types'
+import { fetchDuckDuckGoSerp } from './fetchSerp'
 
 export type ChromeWorkspaceApi = {
   tabGroups: {
@@ -18,6 +20,7 @@ export type ChromeWorkspaceApi = {
     query(queryInfo: chrome.tabs.QueryInfo): Promise<chrome.tabs.Tab[]>
     get(tabId: number): Promise<chrome.tabs.Tab>
     group(options: chrome.tabs.GroupOptions): Promise<number>
+    ungroup(tabIds: number | number[]): Promise<void>
     create(createProperties: chrome.tabs.CreateProperties): Promise<chrome.tabs.Tab>
     update(
       tabId: number,
@@ -28,6 +31,16 @@ export type ChromeWorkspaceApi = {
   windows: {
     getCurrent(): Promise<chrome.windows.Window>
   }
+  scripting?: {
+    executeScript(injection: {
+      target: { tabId: number }
+      func: () => string
+    }): Promise<Array<{ result?: string }>>
+  }
+}
+
+export type CreateChromeAgentWorkspaceOptions = {
+  fetchImpl?: typeof fetch
 }
 
 async function requireGroupMembership(
@@ -62,10 +75,51 @@ export function buildWebSearchUrl(query: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`
 }
 
+async function extractTabMainText(api: ChromeWorkspaceApi, tabId: number): Promise<string> {
+  if (!api.scripting?.executeScript) {
+    return ''
+  }
+  try {
+    const injected = await api.scripting.executeScript({
+      target: { tabId },
+      func: () => document.body?.innerText ?? '',
+    })
+    const text = injected[0]?.result
+    return typeof text === 'string' ? text : ''
+  } catch {
+    return ''
+  }
+}
+
+async function searchViaGoogleTab(
+  workspace: AgentWorkspacePort,
+  api: ChromeWorkspaceApi,
+  groupId: number,
+  query: string,
+): Promise<WebSearchResult> {
+  const url = buildWebSearchUrl(query)
+  const tabId = await workspace.openTab(groupId, url)
+  const mainText = (await extractTabMainText(api, tabId)).trim()
+  try {
+    await workspace.closeTab(groupId, tabId)
+  } catch {
+    // Tab may already be gone; ignore.
+  }
+  return {
+    query: query.trim(),
+    url,
+    mainText,
+    results: [],
+    mode: 'tab',
+    tabId,
+  }
+}
+
 export function createChromeAgentWorkspace(
   chromeApi: ChromeWorkspaceApi = chrome as unknown as ChromeWorkspaceApi,
+  options: CreateChromeAgentWorkspaceOptions = {},
 ): AgentWorkspacePort {
-  return {
+  const workspace: AgentWorkspacePort = {
     async createSession(seedTabId) {
       const tab = await chromeApi.tabs.get(seedTabId)
       if (!isAllowedWorkspaceUrl(tab.url ?? tab.pendingUrl ?? '')) {
@@ -84,6 +138,17 @@ export function createChromeAgentWorkspace(
         color: AGENT_WORKSPACE_COLOR,
       })
       return groupId
+    },
+
+    async endSession(groupId) {
+      const tabs = await chromeApi.tabs.query({ groupId })
+      const tabIds = tabs
+        .map((tab) => tab.id)
+        .filter((id): id is number => typeof id === 'number')
+      if (tabIds.length === 0) {
+        return
+      }
+      await chromeApi.tabs.ungroup(tabIds)
     },
 
     async listTabs(groupId) {
@@ -136,9 +201,31 @@ export function createChromeAgentWorkspace(
     },
 
     async searchWeb(groupId, query) {
-      const url = buildWebSearchUrl(query)
-      const tabId = await this.openTab(groupId, url)
-      return { tabId, url, query: query.trim() }
+      const trimmed = query.trim()
+      if (!trimmed) {
+        throw new Error('searchWeb requires a non-empty query')
+      }
+
+      try {
+        const { url, parsed } = await fetchDuckDuckGoSerp(trimmed, {
+          fetchImpl: options.fetchImpl,
+        })
+        if (parsed.mainText.trim()) {
+          return {
+            query: trimmed,
+            url,
+            mainText: parsed.mainText,
+            results: parsed.results,
+            mode: 'fetch',
+          }
+        }
+      } catch {
+        // Fall through to Google tab extract.
+      }
+
+      return searchViaGoogleTab(workspace, chromeApi, groupId, trimmed)
     },
   }
+
+  return workspace
 }

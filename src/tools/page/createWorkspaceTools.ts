@@ -107,18 +107,33 @@ export function createSearchWebTool(workspace: AgentWorkspacePort): AgentTool {
   return {
     name: 'searchWeb',
     description:
-      'Open a quick web search results page in the Agent Workspace (browser SERP, not Built-in AI grounding)',
+      'Search the web via background DuckDuckGo fetch (Google tab fallback); returns SERP text for grounding',
     capabilities: [],
     dataBoundary: 'BROWSER',
-    inputSchema: z.strictObject({ query: z.string().min(1) }),
+    inputSchema: z.strictObject({
+      query: z.string().optional(),
+      fallbackQuery: z.string().optional(),
+    }),
     outputSchema: z.strictObject({
-      tabId: z.number().int(),
-      url: z.string(),
       query: z.string(),
+      url: z.string(),
+      mainText: z.string(),
+      results: z.array(
+        z.strictObject({
+          title: z.string(),
+          url: z.string(),
+          snippet: z.string(),
+        }),
+      ),
+      mode: z.enum(['fetch', 'tab']),
+      tabId: z.number().int().optional(),
     }),
     async execute(input, context) {
       const groupId = requireGroupId(context)
-      const query = String((input as { query: string }).query).trim()
+      const raw = input as { query?: unknown; fallbackQuery?: unknown }
+      const primary = typeof raw.query === 'string' ? raw.query.trim() : ''
+      const fallback = typeof raw.fallbackQuery === 'string' ? raw.fallbackQuery.trim() : ''
+      const query = primary || fallback
       if (!query) {
         throw new ToolError('validation', 'searchWeb requires a non-empty query')
       }

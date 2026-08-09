@@ -25,6 +25,7 @@ describe('extractWorkspacePages', () => {
 
     const workspace = {
       createSession: vi.fn(),
+      endSession: vi.fn(),
       listTabs: vi.fn(async () => [
         { tabId: 1, title: 'One', url: 'https://example.com/1', active: true },
         { tabId: 2, title: 'Two', url: 'chrome://version', active: false },
@@ -35,9 +36,11 @@ describe('extractWorkspacePages', () => {
       navigateTab: vi.fn(),
       closeTab: vi.fn(),
       searchWeb: vi.fn(async () => ({
-        tabId: 9,
-        url: 'https://www.google.com/search?q=x',
         query: 'x',
+        url: 'https://html.duckduckgo.com/html/?q=x',
+        mainText: 'results',
+        results: [],
+        mode: 'fetch' as const,
       })),
     }
 
