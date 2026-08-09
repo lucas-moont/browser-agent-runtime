@@ -5,6 +5,7 @@ export type DataBoundary = 'LOCAL' | 'BROWSER' | 'EXTERNAL'
 
 export type ToolContext = {
   tabId?: number
+  groupId?: number
 }
 
 export type AgentTool<TInput = unknown, TOutput = unknown> = {

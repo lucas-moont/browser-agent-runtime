@@ -20,11 +20,26 @@ export {
 } from './page/createExtractPageTool'
 
 export {
+  createExtractWorkspacePagesTool,
+  type ExtractWorkspacePagesInput,
+  type ExtractWorkspacePagesOutput,
+  type ExtractWorkspacePagesDeps,
+} from './page/createExtractWorkspacePagesTool'
+
+export {
   createInspectPageContextTool,
   type InspectPageContextInput,
   type InspectPageContextOutput,
   type InspectPageContextToolDeps,
 } from './page/createInspectPageContextTool'
+
+export {
+  createListWorkspaceTabsTool,
+  createOpenWorkspaceTabTool,
+  createNavigateWorkspaceTabTool,
+  createCloseWorkspaceTabTool,
+  createSearchWebTool,
+} from './page/createWorkspaceTools'
 
 export {
   registerPageTools,
