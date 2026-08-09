@@ -14,10 +14,19 @@ export {
 export {
   PREFERRED_LANGUAGES,
   parsePreferredLanguage,
+  tryParsePreferredLanguage,
+  preferredLanguageFromDetections,
   needsOutboundTranslation,
   workingFoundationLanguage,
   type PreferredLanguage,
+  type LanguagePreferenceMode,
+  type LanguageDetectionHit,
 } from './preferredLanguage'
+
+export {
+  detectPreferredLanguageFromText,
+  type DetectPreferredLanguageOptions,
+} from './detectPreferredLanguage'
 
 export {
   type Goal,
@@ -66,6 +75,12 @@ export {
   Planner,
   createPlanner,
   PLANNER_RESPONSE_CONSTRAINTS,
+  CONVERSATIONAL_REPLY_INSTRUCTIONS,
+  looksLikeWebSearchRequest,
+  looksLikeDeepResearchRequest,
+  looksLikePageGroundedRequest,
+  extractWebSearchQuery,
+  buildWebResearchQuery,
   type PlannerInput,
 } from './Planner'
 
