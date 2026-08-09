@@ -186,4 +186,27 @@ describe('WorkflowExecutor seam', () => {
       'tool_completed:two',
     ])
   })
+
+  it('fails a step when the tool exceeds its timeout', async () => {
+    vi.useFakeTimers()
+    const tools = {
+      execute: vi.fn(() => new Promise(() => undefined)),
+    }
+    const plan: Plan = {
+      workflowId: 'conversational',
+      steps: [{ id: 'reply', tool: 'prompt', input: { text: 'hi' } }],
+    }
+
+    const pending = createWorkflowExecutor().execute({ plan, tools })
+    await vi.advanceTimersByTimeAsync(90_000)
+    const result = await pending
+    vi.useRealTimers()
+
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.reason).toContain('timed out')
+    expect(result.events.some((event) => event.type === 'tool_failed')).toBe(true)
+  })
 })

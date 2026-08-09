@@ -24,7 +24,7 @@ describe('extractWorkspacePages', () => {
     })
 
     const workspace = {
-      ensureWorkspace: vi.fn(),
+      createSession: vi.fn(),
       listTabs: vi.fn(async () => [
         { tabId: 1, title: 'One', url: 'https://example.com/1', active: true },
         { tabId: 2, title: 'Two', url: 'chrome://version', active: false },

@@ -59,8 +59,8 @@ The extractable state of a single browser page used as Agent input — content a
 _Avoid_: Context (alone), DOM snapshot, page state, scrape
 
 **AgentWorkspace**:
-The agent-linked Chrome tab group and its membership — the browsing scope the Agent may manage (open / navigate / close) and extract PageContext from for Goals.
-_Avoid_: session, chat group, Conversation (for the tab group), browser window
+The agent-linked Chrome tab group for one side-panel session — created when the extension is opened on a home tab (`createSession`), scoped to that Conversation instance.
+_Avoid_: session, chat group, Conversation (for the tab group), browser window, reusable window-wide group
 
 **WorkspaceTab**:
 A tab that is a member of the AgentWorkspace.

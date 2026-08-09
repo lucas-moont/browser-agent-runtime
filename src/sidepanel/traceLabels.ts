@@ -2,12 +2,12 @@ import type { AgentEvent } from '../runtime'
 
 const EVENT_LABELS: Record<AgentEvent['type'], string> = {
   goal_received: 'Goal received',
-  context_collected: 'PageContext collected',
-  plan_created: 'Plan created',
-  tool_started: 'Tool started',
-  tool_completed: 'Tool completed',
-  agent_completed: 'Agent completed',
-  agent_failed: 'Agent failed',
+  context_collected: 'Page read',
+  plan_created: 'Plan',
+  tool_started: 'Started',
+  tool_completed: 'Finished',
+  agent_completed: 'Done',
+  agent_failed: 'Failed',
 }
 
 export function formatTraceEventLabel(event: AgentEvent): string {

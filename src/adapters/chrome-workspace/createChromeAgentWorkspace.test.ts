@@ -12,37 +12,24 @@ describe('isAllowedWorkspaceUrl', () => {
 })
 
 describe('createChromeAgentWorkspace', () => {
-  it('reuses an existing titled group', async () => {
-    const workspace = createChromeAgentWorkspace({
-      windows: { getCurrent: vi.fn(async () => ({ id: 1 })) },
-      tabGroups: {
-        query: vi.fn(async () => [{ id: 9, title: AGENT_WORKSPACE_TITLE, color: 'blue' }]),
-        update: vi.fn(async () => undefined),
-      },
-      tabs: {
-        query: vi.fn(),
-        group: vi.fn(),
-        create: vi.fn(),
-        update: vi.fn(),
-        remove: vi.fn(),
-      },
-    } as never)
-
-    await expect(workspace.ensureWorkspace()).resolves.toBe(9)
-  })
-
-  it('creates a group from the active tab when none exists', async () => {
+  it('createSession always groups the seed tab into a new titled workspace', async () => {
     const group = vi.fn(async () => 42)
     const update = vi.fn(async () => undefined)
+    const get = vi.fn(async () => ({
+      id: 7,
+      windowId: 1,
+      url: 'https://example.com/docs',
+      status: 'complete',
+    }))
     const workspace = createChromeAgentWorkspace({
-      windows: { getCurrent: vi.fn(async () => ({ id: 1 })) },
+      windows: { getCurrent: vi.fn() },
       tabGroups: {
-        query: vi.fn(async () => []),
+        query: vi.fn(),
         update,
       },
       tabs: {
-        query: vi.fn(async () => [{ id: 7, active: true }]),
-        get: vi.fn(async () => ({ id: 7, status: 'complete' })),
+        query: vi.fn(),
+        get,
         group,
         create: vi.fn(),
         update: vi.fn(),
@@ -50,12 +37,32 @@ describe('createChromeAgentWorkspace', () => {
       },
     } as never)
 
-    await expect(workspace.ensureWorkspace()).resolves.toBe(42)
-    expect(group).toHaveBeenCalled()
+    await expect(workspace.createSession(7)).resolves.toBe(42)
+    expect(group).toHaveBeenCalledWith({
+      tabIds: 7,
+      createProperties: { windowId: 1 },
+    })
     expect(update).toHaveBeenCalledWith(42, {
       title: AGENT_WORKSPACE_TITLE,
       color: 'blue',
     })
+  })
+
+  it('createSession rejects non-http seed tabs', async () => {
+    const workspace = createChromeAgentWorkspace({
+      windows: { getCurrent: vi.fn() },
+      tabGroups: { query: vi.fn(), update: vi.fn() },
+      tabs: {
+        query: vi.fn(),
+        get: vi.fn(async () => ({ id: 3, url: 'chrome://extensions', windowId: 1 })),
+        group: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        remove: vi.fn(),
+      },
+    } as never)
+
+    await expect(workspace.createSession(3)).rejects.toThrow(/http\(s\)/)
   })
 
   it('rejects non-http open and out-of-group close', async () => {

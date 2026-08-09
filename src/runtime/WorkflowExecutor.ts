@@ -36,6 +36,38 @@ export type WorkflowExecutorOptions = {
   onEvent?: (event: WorkflowExecutorEvent) => void
 }
 
+const DEFAULT_TOOL_TIMEOUT_MS = 45_000
+const AI_TOOL_TIMEOUT_MS = 90_000
+
+const AI_TOOLS = new Set(['prompt', 'summarize', 'translate', 'detectLanguage'])
+
+export function toolTimeoutMs(tool: string): number {
+  return AI_TOOLS.has(tool) ? AI_TOOL_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS
+}
+
+export function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message))
+    }, timeoutMs)
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
 function topoSort(steps: AgentStep[]): AgentStep[] | { error: string } {
   const byId = new Map(steps.map((step) => [step.id, step]))
   if (byId.size !== steps.length) {
@@ -139,7 +171,11 @@ export class WorkflowExecutor {
       }
 
       try {
-        const output = await options.tools.execute(step.tool, resolvedInput, options.toolContext)
+        const output = await withTimeout(
+          options.tools.execute(step.tool, resolvedInput, options.toolContext),
+          toolTimeoutMs(step.tool),
+          `Tool "${step.tool}" timed out`,
+        )
         outputs[step.id] = output
         emit({
           type: 'tool_completed',

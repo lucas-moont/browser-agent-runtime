@@ -9,7 +9,8 @@ export type WorkspaceTabInfo = {
 }
 
 export type AgentWorkspacePort = {
-  ensureWorkspace(): Promise<number>
+  /** Always create a new AgentWorkspace group seeded with this tab (one session). */
+  createSession(seedTabId: number): Promise<number>
   listTabs(groupId: number): Promise<WorkspaceTabInfo[]>
   inviteTab(groupId: number, tabId: number): Promise<void>
   openTab(groupId: number, url: string): Promise<number>

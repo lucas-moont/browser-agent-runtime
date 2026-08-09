@@ -4,10 +4,8 @@ import { formatTraceEventLabel } from './traceLabels'
 describe('formatTraceEventLabel', () => {
   it('maps high-level Event types without chain-of-thought', () => {
     expect(formatTraceEventLabel({ type: 'goal_received', at: 1 })).toBe('Goal received')
-    expect(formatTraceEventLabel({ type: 'context_collected', at: 1 })).toBe(
-      'PageContext collected',
-    )
-    expect(formatTraceEventLabel({ type: 'agent_completed', at: 1 })).toBe('Agent completed')
+    expect(formatTraceEventLabel({ type: 'context_collected', at: 1 })).toBe('Page read')
+    expect(formatTraceEventLabel({ type: 'agent_completed', at: 1 })).toBe('Done')
   })
 
   it('includes workflow and tool names when present', () => {
@@ -17,7 +15,7 @@ describe('formatTraceEventLabel', () => {
         at: 1,
         workflowId: 'analyzePage',
       }),
-    ).toBe('Plan created: analyzePage')
+    ).toBe('Plan: analyzePage')
 
     expect(
       formatTraceEventLabel({
@@ -25,7 +23,7 @@ describe('formatTraceEventLabel', () => {
         at: 1,
         tool: 'summarize',
       }),
-    ).toBe('Tool started: summarize')
+    ).toBe('Started: summarize')
 
     expect(
       formatTraceEventLabel({
@@ -33,7 +31,7 @@ describe('formatTraceEventLabel', () => {
         at: 1,
         tool: 'detectLanguage',
       }),
-    ).toBe('Tool completed: detectLanguage')
+    ).toBe('Finished: detectLanguage')
   })
 
   it('surfaces failure reason on agent_failed', () => {
@@ -43,6 +41,6 @@ describe('formatTraceEventLabel', () => {
         at: 1,
         reason: 'Missing required capabilities: summarizer',
       }),
-    ).toBe('Agent failed: Missing required capabilities: summarizer')
+    ).toBe('Failed: Missing required capabilities: summarizer')
   })
 })

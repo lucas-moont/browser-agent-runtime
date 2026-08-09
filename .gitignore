@@ -1,4 +1,5 @@
 .scratch/
+.cursor/
 node_modules/
 dist/
 build/

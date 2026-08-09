@@ -59,7 +59,20 @@ function fakeWorkspace(
 ): AgentWorkspacePort {
   let members = [...tabs]
   return {
-    ensureWorkspace: vi.fn(async () => 99),
+    createSession: vi.fn(async (seedTabId) => {
+      if (!members.some((tab) => tab.tabId === seedTabId)) {
+        members = [
+          {
+            tabId: seedTabId,
+            title: `Tab ${seedTabId}`,
+            url: 'https://example.com',
+            active: true,
+          },
+          ...members,
+        ]
+      }
+      return 99
+    }),
     listTabs: vi.fn(async () =>
       members.map((tab) => ({
         tabId: tab.tabId,
@@ -102,6 +115,7 @@ describe('side panel chat shell', () => {
   })
 
   it('renders chat chrome with language select, capabilities, and demo chips', async () => {
+    const workspace = fakeWorkspace()
     const { container, root } = mount(
       <App
         createRuntime={() =>
@@ -114,8 +128,8 @@ describe('side panel chat shell', () => {
             events: [],
           })
         }
-        workspace={fakeWorkspace()}
-        resolveTabId={async () => 1}
+        workspace={workspace}
+        homeTabId={1}
         loadCapabilities={async () => ({
           languageDetector: 'available',
           summarizer: 'available',
@@ -128,6 +142,7 @@ describe('side panel chat shell', () => {
 
     await act(async () => {
       await Promise.resolve()
+      await Promise.resolve()
     })
 
     expect(container.querySelector('h1')?.textContent).toBe(APP_TITLE)
@@ -135,8 +150,9 @@ describe('side panel chat shell', () => {
     expect(container.textContent).toContain('Auto')
     expect(container.querySelector('[aria-label="Built-in AI capabilities"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Agent workspace"]')).not.toBeNull()
-    expect(container.textContent).toContain('Workspace · Browser Agent')
-    expect(container.textContent).toContain('Add current tab')
+    expect(container.textContent).toContain('Session workspace')
+    expect(container.textContent).not.toContain('Add current tab')
+    expect(workspace.createSession).toHaveBeenCalledWith(1)
     expect(container.querySelector('[aria-label="Conversation"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Message"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Suggested prompts"]')).not.toBeNull()
@@ -147,7 +163,7 @@ describe('side panel chat shell', () => {
 
     expect(DEMO_GOALS.some((goal) => goal.label === 'Summarize')).toBe(true)
     expect(container.textContent).toContain('Detect')
-    expect(container.textContent).toContain('Off')
+    expect(container.textContent).toContain('off')
   })
 
   it('sends a Goal from a suggestion chip with preferred language context', async () => {
@@ -179,6 +195,7 @@ describe('side panel chat shell', () => {
       <App
         createRuntime={() => runtime}
         workspace={fakeWorkspace([{ tabId: 7, title: 'Page', url: 'https://example.com', active: true }])}
+        homeTabId={7}
         resolveTabId={async () => 7}
         detectMessageLanguage={detectMessageLanguage}
         loadCapabilities={async () => ({
@@ -217,7 +234,7 @@ describe('side panel chat shell', () => {
       DEMO_GOALS[0].instruction,
     )
     expect(container.querySelector('[data-role="assistant"]')).not.toBeNull()
-    expect(container.textContent).toContain('Completed')
+    expect(container.textContent).toContain('Done')
     expect(container.textContent).toContain('A short summary')
     expect(container.querySelector('[data-workflow="conversational"]')).not.toBeNull()
 
@@ -254,6 +271,7 @@ describe('side panel chat shell', () => {
       <App
         createRuntime={() => runtime}
         workspace={fakeWorkspace()}
+        homeTabId={1}
         resolveTabId={async () => 1}
         detectMessageLanguage={detectMessageLanguage}
         loadCapabilities={async () => ({
@@ -314,6 +332,7 @@ describe('side panel chat shell', () => {
       <App
         createRuntime={() => runtime}
         workspace={fakeWorkspace()}
+        homeTabId={1}
         resolveTabId={async () => 1}
         detectMessageLanguage={async () => 'en'}
         loadCapabilities={async () => ({
@@ -386,6 +405,7 @@ describe('side panel chat shell', () => {
       <App
         createRuntime={() => fakeRuntime(failed)}
         workspace={fakeWorkspace()}
+        homeTabId={1}
         resolveTabId={async () => 1}
         loadCapabilities={async () => ({
           languageDetector: 'available',
@@ -409,5 +429,98 @@ describe('side panel chat shell', () => {
     expect(container.textContent).toContain('Unsupported capability')
     expect(container.textContent).toContain('Missing required capabilities: prompt')
     expect(container.textContent).toContain('Failed')
+  })
+
+  it('keeps prior user messages when sending a second Goal', async () => {
+    const first: AgentState = {
+      status: 'completed',
+      goal: { instruction: 'first question' },
+      context: { mainText: 'hello' },
+      plan: [],
+      workflowId: 'conversational',
+      outputs: {},
+      result: { reply: 'first reply', preferredLanguage: 'en', foundationLanguage: 'en' },
+      events: [
+        { type: 'goal_received', at: 1 },
+        { type: 'agent_completed', at: 2 },
+      ],
+    }
+    const second: AgentState = {
+      status: 'completed',
+      goal: { instruction: 'second question' },
+      context: { mainText: 'hello' },
+      plan: [],
+      workflowId: 'conversational',
+      outputs: {},
+      result: { reply: 'second reply', preferredLanguage: 'en', foundationLanguage: 'en' },
+      events: [
+        { type: 'goal_received', at: 3 },
+        { type: 'agent_completed', at: 4 },
+      ],
+    }
+
+    let runCount = 0
+    const runtime = {
+      getState: () => (runCount <= 1 ? first : second),
+      run: vi.fn(async (options) => {
+        runCount += 1
+        return {
+          ...(runCount === 1 ? first : second),
+          goal: options.goal,
+        }
+      }),
+    } as unknown as AgentRuntime
+
+    const { container, root } = mount(
+      <App
+        createRuntime={() => runtime}
+        workspace={fakeWorkspace()}
+        homeTabId={1}
+        resolveTabId={async () => 1}
+        detectMessageLanguage={async () => 'en'}
+        loadCapabilities={async () => ({
+          languageDetector: 'available',
+          summarizer: 'available',
+          translator: 'available',
+          prompt: 'available',
+        })}
+      />,
+    )
+    mounts.push({ container, root })
+
+    const composer = container.querySelector(
+      '[aria-label="Message"]',
+    ) as HTMLTextAreaElement
+    const setNativeValue = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      'value',
+    )?.set
+
+    await act(async () => {
+      setNativeValue?.call(composer, 'first question')
+      composer.dispatchEvent(new Event('input', { bubbles: true }))
+      composer.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      setNativeValue?.call(composer, 'second question')
+      composer.dispatchEvent(new Event('input', { bubbles: true }))
+      composer.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      )
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const userBubbles = Array.from(container.querySelectorAll('[data-role="user"]')).map(
+      (node) => node.textContent,
+    )
+    expect(userBubbles).toEqual(['first question', 'second question'])
+    expect(container.textContent).toContain('first reply')
+    expect(container.textContent).toContain('second reply')
   })
 })

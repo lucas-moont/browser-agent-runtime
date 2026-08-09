@@ -22,10 +22,10 @@ const STATUS_COPY: Record<CapabilityReadiness, string> = {
 }
 
 const SHORT_STATUS: Record<CapabilityReadiness, string> = {
-  available: 'OK',
-  downloadable: 'DL',
+  available: 'on',
+  downloadable: 'dl',
   downloading: '…',
-  unavailable: 'Off',
+  unavailable: 'off',
 }
 
 const ORDER: CapabilityId[] = ['languageDetector', 'summarizer', 'translator', 'prompt']

@@ -27,10 +27,20 @@ import {
 } from './createSidePanelRuntime'
 import { detectMessagePreferredLanguage } from './detectMessageLanguage'
 import { ResultView } from './ResultView'
+import { runningStatusFromEvents } from './runningStatus'
 
 export const APP_TITLE = 'Browser Agent Runtime'
 
 const THREAD_NEAR_BOTTOM_PX = 80
+
+export function readHomeTabId(search = typeof window !== 'undefined' ? window.location.search : ''): number | undefined {
+  const raw = new URLSearchParams(search).get('homeTabId')
+  if (!raw) {
+    return undefined
+  }
+  const tabId = Number(raw)
+  return Number.isFinite(tabId) ? tabId : undefined
+}
 
 export function isThreadNearBottom(
   el: Pick<HTMLElement, 'scrollTop' | 'scrollHeight' | 'clientHeight'>,
@@ -84,6 +94,8 @@ const IDLE_STATE: AgentState = {
 
 export type AppProps = {
   createRuntime?: () => AgentRuntime
+  /** Tab that opened this side-panel instance (from `?homeTabId=`). */
+  homeTabId?: number
   resolveTabId?: () => Promise<number | undefined>
   loadCapabilities?: (preferredLanguage?: PreferredLanguage) => Promise<CapabilitySnapshot>
   detectMessageLanguage?: (text: string, fallback: PreferredLanguage) => Promise<PreferredLanguage>
@@ -100,13 +112,8 @@ function unsupportedCapability(error: string | undefined): boolean {
 
 export function App({
   createRuntime,
-  resolveTabId = async () => {
-    try {
-      return await resolveActiveTabId()
-    } catch {
-      return undefined
-    }
-  },
+  homeTabId: homeTabIdProp,
+  resolveTabId,
   loadCapabilities = async (preferredLanguage = 'en') => {
     const registry = createSidePanelCapabilityRegistry()
     const preferred = parsePreferredLanguage(preferredLanguage)
@@ -126,12 +133,28 @@ export function App({
   },
   workspace = createChromeAgentWorkspace(),
 }: AppProps = {}) {
+  const homeTabId = homeTabIdProp ?? readHomeTabId()
+  const resolveHomeTabId =
+    resolveTabId ??
+    (async () => {
+      if (typeof homeTabId === 'number') {
+        return homeTabId
+      }
+      try {
+        return await resolveActiveTabId()
+      } catch {
+        return undefined
+      }
+    })
   const makeRuntime =
     createRuntime ?? (() => createSidePanelRuntime(createSidePanelCapabilityRegistry(), workspace))
   const languageSelectId = useId()
   const threadRef = useRef<HTMLDivElement | null>(null)
   const stickThreadToBottomRef = useRef(true)
+  const prevMessageCountRef = useRef(0)
+  const runLockRef = useRef(false)
   const runtimeRef = useRef<AgentRuntime | null>(null)
+  const sessionStartedRef = useRef(false)
   const [snapshot, setSnapshot] = useState<CapabilitySnapshot>(DEFAULT_CAPABILITY_SNAPSHOT)
   const [languageMode, setLanguageMode] = useState<LanguagePreferenceMode>('auto')
   const [lastDetectedLanguage, setLastDetectedLanguage] = useState<PreferredLanguage>('en')
@@ -145,35 +168,30 @@ export function App({
   const effectivePreferred =
     languageMode === 'auto' ? lastDetectedLanguage : languageMode
 
-  async function refreshWorkspace(nextGroupId?: number) {
+  async function refreshWorkspace(sessionGroupId: number) {
     try {
-      const id = nextGroupId ?? (await workspace.ensureWorkspace())
-      setGroupId(id)
-      const tabs = await workspace.listTabs(id)
+      setGroupId(sessionGroupId)
+      const tabs = await workspace.listTabs(sessionGroupId)
       setWorkspaceTabs(tabs)
       setWorkspaceError(undefined)
-      return id
+      return sessionGroupId
     } catch (error) {
       setWorkspaceError(error instanceof Error ? error.message : 'Workspace unavailable')
       return undefined
     }
   }
 
-  async function inviteCurrentTab() {
-    const tabId = await resolveTabId()
-    if (typeof tabId !== 'number') {
-      setWorkspaceError('No active tab to invite')
-      return
-    }
-    const id = (await refreshWorkspace()) ?? groupId
-    if (typeof id !== 'number') {
+  async function startSessionForHomeTab() {
+    const seedTabId = await resolveHomeTabId()
+    if (typeof seedTabId !== 'number') {
+      setWorkspaceError('Open the extension from an http(s) page tab')
       return
     }
     try {
-      await workspace.inviteTab(id, tabId)
+      const id = await workspace.createSession(seedTabId)
       await refreshWorkspace(id)
     } catch (error) {
-      setWorkspaceError(error instanceof Error ? error.message : 'Invite failed')
+      setWorkspaceError(error instanceof Error ? error.message : 'Workspace unavailable')
     }
   }
 
@@ -190,25 +208,36 @@ export function App({
   }, [loadCapabilities, effectivePreferred])
 
   useEffect(() => {
-    let cancelled = false
-    void refreshWorkspace().then(() => {
-      if (cancelled) {
-        return
-      }
-    })
-    return () => {
-      cancelled = true
+    if (sessionStartedRef.current) {
+      return
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount ensure once
+    sessionStartedRef.current = true
+    void startSessionForHomeTab()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one session per panel instance
   }, [])
 
   useEffect(() => {
     const el = threadRef.current
+    const messageCountGrew = messages.length > prevMessageCountRef.current
+    prevMessageCountRef.current = messages.length
+
     if (!el || !stickThreadToBottomRef.current) {
       return
     }
-    el.scrollTop = el.scrollHeight
-  }, [messages, running])
+
+    if (messageCountGrew || isThreadNearBottom(el)) {
+      el.scrollTop = el.scrollHeight
+      return
+    }
+
+    stickThreadToBottomRef.current = false
+  }, [messages])
+
+  function handleThreadWheel(event: { deltaY: number }) {
+    if (event.deltaY < 0) {
+      stickThreadToBottomRef.current = false
+    }
+  }
 
   function handleThreadScroll() {
     const el = threadRef.current
@@ -227,31 +256,34 @@ export function App({
   }
 
   async function prepareWorkspaceForRun(tabId: number | undefined): Promise<number | undefined> {
-    const id = await refreshWorkspace(groupId)
-    if (typeof id !== 'number') {
-      return undefined
+    if (typeof groupId === 'number') {
+      await refreshWorkspace(groupId)
+      return groupId
     }
     if (typeof tabId === 'number') {
-      const members = await workspace.listTabs(id)
-      if (!members.some((tab) => tab.tabId === tabId)) {
-        try {
-          await workspace.inviteTab(id, tabId)
-          await refreshWorkspace(id)
-        } catch {
-          // invite may fail on restricted URLs; still run with existing members
-        }
+      try {
+        const id = await workspace.createSession(tabId)
+        await refreshWorkspace(id)
+        return id
+      } catch (error) {
+        setWorkspaceError(error instanceof Error ? error.message : 'Workspace unavailable')
+        return undefined
       }
     }
-    return id
+    return undefined
   }
 
   async function sendGoal(instruction: string) {
     const trimmed = instruction.trim()
-    if (!trimmed || running) {
+    if (!trimmed || runLockRef.current) {
       return
     }
 
-    const preferred = await resolvePreferredForMessage(trimmed)
+    runLockRef.current = true
+    setRunning(true)
+    setDraft('')
+    stickThreadToBottomRef.current = true
+
     const history: ConversationTurn[] = []
     for (const message of messages) {
       if (message.role === 'user') {
@@ -283,9 +315,6 @@ export function App({
       events: [],
     }
 
-    setDraft('')
-    setRunning(true)
-    stickThreadToBottomRef.current = true
     setMessages((prev) => [...prev, userMessage, placeholder])
 
     const runtime = makeRuntime()
@@ -310,7 +339,8 @@ export function App({
     }, 80)
 
     try {
-      const tabId = await resolveTabId()
+      const preferred = await resolvePreferredForMessage(trimmed)
+      const tabId = await resolveHomeTabId()
       const preparedGroupId = await prepareWorkspaceForRun(tabId)
       const next = await runtime.run({
         goal: {
@@ -367,6 +397,7 @@ export function App({
       )
     } finally {
       window.clearInterval(poll)
+      runLockRef.current = false
       setRunning(false)
       const latest = runtimeRef.current?.getState()
       if (latest) {
@@ -401,7 +432,10 @@ export function App({
     <main className="shell shell--chat">
       <header className="shell__header shell__header--sticky">
         <div className="shell__header-row">
-          <h1>{APP_TITLE}</h1>
+          <div className="shell__brand">
+            <span className="shell__signal" aria-hidden="true" />
+            <h1>{APP_TITLE}</h1>
+          </div>
           <label className="language-select" htmlFor={languageSelectId}>
             <span className="language-select__label">Language</span>
             <select
@@ -432,27 +466,29 @@ export function App({
         </div>
         <CapabilityStrip snapshot={snapshot} compact />
         <div className="workspace-strip" aria-label="Agent workspace">
-          <div className="workspace-strip__title">
-            Workspace · Browser Agent · {workspaceTabs.length} tab
-            {workspaceTabs.length === 1 ? '' : 's'}
+          <div className="workspace-strip__badge" aria-hidden="true">
+            {Math.max(workspaceTabs.length, 1)}
           </div>
-          {workspaceTabs.length === 0 ? (
-            <p className="workspace-strip__empty">No tabs in workspace — Add current tab</p>
-          ) : (
-            <ol className="workspace-strip__tabs">
-              {workspaceTabs.map((tab) => (
-                <li key={tab.tabId} title={tab.url}>
-                  {tab.title || tab.url || `Tab ${tab.tabId}`}
-                </li>
-              ))}
-            </ol>
-          )}
-          <div className="workspace-strip__actions">
-            <button type="button" disabled={running} onClick={() => void inviteCurrentTab()}>
-              Add current tab
-            </button>
+          <div className="workspace-strip__copy">
+            <div className="workspace-strip__title">
+              Session workspace · {workspaceTabs.length} tab
+              {workspaceTabs.length === 1 ? '' : 's'}
+            </div>
+            {workspaceTabs.length === 0 ? (
+              <p className="workspace-strip__empty">
+                Linking this tab to a new Browser Agent group…
+              </p>
+            ) : (
+              <ol className="workspace-strip__tabs">
+                {workspaceTabs.map((tab) => (
+                  <li key={tab.tabId} title={tab.url}>
+                    {tab.title || tab.url || `Tab ${tab.tabId}`}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {workspaceError ? <p className="workspace-strip__error">{workspaceError}</p> : null}
           </div>
-          {workspaceError ? <p className="workspace-strip__error">{workspaceError}</p> : null}
         </div>
       </header>
 
@@ -461,6 +497,10 @@ export function App({
         ref={threadRef}
         aria-label="Conversation"
         onScroll={handleThreadScroll}
+        onWheel={handleThreadWheel}
+        onTouchMove={() => {
+          stickThreadToBottomRef.current = false
+        }}
       >
         {messages.length === 0 ? (
           <p className="chat-thread__empty">
@@ -485,15 +525,22 @@ export function App({
               data-role="assistant"
               data-status={message.status}
             >
-              <p className="chat-bubble__status">
-                {message.status === 'running'
-                  ? 'Running…'
-                  : message.status === 'completed'
-                    ? 'Completed'
+              {message.status === 'running' ? (
+                <div className="chat-bubble__thinking" aria-live="polite">
+                  <span className="chat-bubble__thinking-pulse" aria-hidden="true" />
+                  <p className="chat-bubble__thinking-label">
+                    {runningStatusFromEvents(message.events)}
+                  </p>
+                </div>
+              ) : (
+                <p className="chat-bubble__status">
+                  {message.status === 'completed'
+                    ? 'Done'
                     : message.status === 'failed'
                       ? 'Failed'
                       : message.status}
-              </p>
+                </p>
+              )}
 
               {message.error ? (
                 <div
@@ -516,7 +563,7 @@ export function App({
                 />
               ) : null}
 
-              {message.events.length > 0 ? (
+              {message.status !== 'running' && message.events.length > 0 ? (
                 <details className="runtime-trace">
                   <summary>Runtime trace</summary>
                   <AgentTrace events={message.events} />
@@ -561,11 +608,17 @@ export function App({
             type="button"
             className="chat-composer__send"
             disabled={running || draft.trim().length === 0}
+            aria-label="Send"
             onClick={() => {
               void sendGoal(draft)
             }}
           >
-            Send
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                fill="currentColor"
+                d="M3.4 20.6 20.95 12 3.4 3.4l.1 6.85L15.1 12 3.5 13.75l-.1 6.85Z"
+              />
+            </svg>
           </button>
         </div>
       </footer>

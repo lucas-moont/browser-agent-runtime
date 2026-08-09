@@ -556,7 +556,7 @@ The prototype is no longer “three demo buttons that run templates.” The **pr
 | Surface | Side-panel Conversation (composer + suggestion chips) |
 | Goal path | Chip click ≡ send that instruction as a message |
 | Workflow | Always `conversational`; intent branches choose Steps |
-| Scope | Agent Workspace tab group (`Browser Agent`), multi-tab extract |
+| Scope | Agent Workspace tab group per side-panel open (`Browser Agent`), seeded with the home tab; panel is tab-scoped |
 | Language | PreferredLanguage Auto (detector) or lock; outbound translate when needed |
 | Research | `searchWeb` + raw truncated SERP extract (no Built-in web grounding) |
 | Observability | Runtime Trace under each assistant turn |

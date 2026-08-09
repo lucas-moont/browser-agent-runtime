@@ -54,6 +54,7 @@ async function waitForTabComplete(
     }
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
+  throw new Error(`Tab ${tabId} did not finish loading in time`)
 }
 
 export function buildWebSearchUrl(query: string): string {
@@ -65,32 +66,17 @@ export function createChromeAgentWorkspace(
   chromeApi: ChromeWorkspaceApi = chrome as unknown as ChromeWorkspaceApi,
 ): AgentWorkspacePort {
   return {
-    async ensureWorkspace() {
-      const current = await chromeApi.windows.getCurrent()
-      const windowId = current.id
-      const existing = await chromeApi.tabGroups.query({
-        title: AGENT_WORKSPACE_TITLE,
-        ...(typeof windowId === 'number' ? { windowId } : {}),
-      })
-      if (existing[0]) {
-        await chromeApi.tabGroups.update(existing[0].id, {
-          title: AGENT_WORKSPACE_TITLE,
-          color: AGENT_WORKSPACE_COLOR,
-        })
-        return existing[0].id
+    async createSession(seedTabId) {
+      const tab = await chromeApi.tabs.get(seedTabId)
+      if (!isAllowedWorkspaceUrl(tab.url ?? tab.pendingUrl ?? '')) {
+        throw new Error(
+          'Open the extension on an http(s) page — this tab cannot join the Agent Workspace',
+        )
       }
 
-      const seedTabs = await chromeApi.tabs.query({
-        active: true,
-        ...(typeof windowId === 'number' ? { windowId } : { currentWindow: true }),
-      })
-      const seedId = seedTabs[0]?.id
-      if (typeof seedId !== 'number') {
-        throw new Error('No active tab available to create AgentWorkspace')
-      }
-
+      const windowId = tab.windowId
       const groupId = await chromeApi.tabs.group({
-        tabIds: seedId,
+        tabIds: seedTabId,
         ...(typeof windowId === 'number' ? { createProperties: { windowId } } : {}),
       })
       await chromeApi.tabGroups.update(groupId, {
@@ -115,6 +101,10 @@ export function createChromeAgentWorkspace(
     },
 
     async inviteTab(groupId, tabId) {
+      const tab = await chromeApi.tabs.get(tabId)
+      if (!isAllowedWorkspaceUrl(tab.url ?? tab.pendingUrl ?? '')) {
+        throw new Error('Only http(s) tabs can join the AgentWorkspace')
+      }
       await chromeApi.tabs.group({ groupId, tabIds: tabId })
     },
 
