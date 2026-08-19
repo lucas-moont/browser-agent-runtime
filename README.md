@@ -93,4 +93,4 @@ FoundationLanguages for Summarizer/Prompt: `en`, `ja`, `es`, `de`, `fr`. `pt` an
 
 ## Docs maintenance
 
-On **major product / UX / architecture** changes, update this README and the local [`LINKEDIN_POST.md`](LINKEDIN_POST.md) (gitignored narrative) in the same change set — not as a follow-up chore.
+On **major product / UX / architecture** changes, update this README in the same change set — not as a follow-up chore.
